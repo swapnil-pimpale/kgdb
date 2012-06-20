@@ -1,0 +1,1256 @@
+2007-06-13 Jason Wessel <jason.wessel@windriver.com>
+	Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Code cleanup in core-lite.patch remove uneeded variable checks
+	in early init.
+
+2007-06-12 Jason Wessel <jason.wessel@windriver.com>
+	* Move the early_init calls from breakpoint() to avoid possible
+	.init_text section problems
+	* Remove the breakpoint tasklet from the early initialization and
+	defer breakpoints to the late_init. On SMP x86_64 in particular
+	scheduling a tasklet too early can result in a silent death hang
+	in the system, as there is a race to setup the exception stack vs
+	the schduling context vs kgdb having the ability to debug the
+	exception.
+
+2007-06-11 Jason Wessel <jason.wessel@windriver.com>
+	* Add a MIPS64 patch to pad the pt_regs such that when an exception
+	is taken that the first 48 bytes contain the saved call parameters
+	on the stack, and the rest is the normal pt_regs struct.
+
+2007-06-07 Jason Wessel <jason.wessel@windriver.com>
+	* Fix on case where the kgdb_may_fault unset was missing
+	* Add code to save and restore the preempt count when using the
+	kgdb_may_fault context
+
+2007-06-06 Jason Wessel <jason.wessel@windriver.com>
+	* Add hardware breakpoint support for x86_64 and i386 arch
+	* Re-organized the HW breakpoint support in the core-lite.patch
+	* Removed the i386.patch
+	* Added i386-hw_breakpoints.patch and x86_64-hw_breakpoints.patch
+
+2007-05-24 Sergei Shtylyov <sshtylyov@ru.mvista.com> 
+	Manish Lachwani <mlachwani@mvista.com>
+	* MIPS - smp_call_function() shouldn't be called with interrupts
+	disabled, but kgdb_roundup_cpu() fails to actually enable them
+	using local_irq_restore() as the 'flags' argument passed to it has
+	interrupts already disabled
+	* mips handle_exception() does not enable interrupts prior to
+	__flush_cache_all() call which also ends up in IPI
+	* 'mips_die_head' didn't have its 'lock' field initialized.
+
+2007-05-24 Sergei Shtylyov <sshtylyov@ru.mvista.com> 
+	Kevin Hilman <khilman@mvista.com>
+	* The serial ports used by kgdb must be initialized very early in
+	the boot. The ARM 'init_machine' where serial ports are normally
+	initialized is too late since the 'kgdbwait' command-line option
+	is handled in the early_param() processing.
+
+2007-05-24 Yuri Shpilevsky <yshpilevsky@ru.mvista.com>
+	Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Add checks for CPM UART being used by KGDB to the console
+	setup() and driver probe() methods -- previously it was only in
+	the "legacy mode" path of the module_init() function.
+
+2007-05-21 Deepak Saxena <dsaxena@mvista.com>
+	Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Update KGDB serial driver for AMBA PL011 UARTs
+
+2007-05-21 Sergei Shtylyov <sshtylyov@ru.mvista.com> 
+	* restore the lost ending brace in arch_init_irq();
+	* fix the interrupt handler to take no arguments, due to
+	2.6.19-rc1 change, remove from it unreacheabe code, and add the
+	missing external declaration
+	* fix the write_char() method to accept argument of type 'u8'
+	* convert the status polling loop in the read_char() method to 'do
+	{} while'
+	* change 'kgdb_swarm' prefix in the function names to
+	'kgdbsibyte', so that they all look alike
+	* kill unneeded {pre|post}_exception() method initializers;
+
+2007-05-21 Sergei Shtylyov <sshtylyov@ru.mvista.com> 
+	Kevin Hilman <khilman@mvista.com>
+	* Fix the register layout of the registers passed to the host gdb,
+	so that CPSR is properly interpreted.
+
+2007-05-21 Jason Wessel <jason.wessel@windriver.com>
+	* Use the kgdb_arch_handle_exception() to continue in the case of
+	a kernel to user space single step.
+
+2007-05-21 Bob Picco <bob.picco@hp.com>
+	* ia64.patch removed from the default patches in the series file.
+
+2007-05-16 Amit S. Kale <amitkale@linsyssoft.com>
+	* Fix the single step to user space check to use
+	raw_smp_processor_id()
+
+2007-05-15 Jason Wessel <jason.wessel@windriver.com>
+	* Fix the case on ia32 and x86_64 where kgdb needs to eat a single
+	step trap if there was a request to step from the kernel to user
+	space with a single step instruction.
+
+2007-05-15 Jason Wessel <jason.wessel@windriver.com>
+	* Fix some corner cases where KGDB will silently hang or kill the
+	system, if a user accidentally tries to source step into a
+	spin_unlock() call or source step in on a macro containing
+	smp_processor_id().
+
+2007-05-15 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Get rid of *all* the remains of the arch/ppc specific KGDB
+	implementation.
+
+2007-05-15 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Update arch/ppc KGDB implementation
+	* merge the begginning of trap-to-signal table containing the more
+	or less standard traps for all CPU families
+	* make the instruction access trap generate SIGSEGV just like its
+	data access counterpart
+	* add some traps specific to Freescale E200/E500, Book E, 40x,
+	6xx/74xx, and 8xx CPU families
+	* remove PPC64 data/instruction segment trap codes as they never
+	reach the high level code anyway
+	* remove table entries for the reserved trap since they should be
+	translated to SIGHUP anyway
+	* make the code dealing with the SPE registers also compile for
+	Freescale E200 CPUs and fix it to correctly skip over if SPE
+	support is not enabled
+	* fix sleeping_thread_to_gdb_regs() to use the specified (and not
+	the current) process' context to retrieve the SPE accumulator and
+	SPEFSCR
+	* skip over the $r3-$r13 and FP registers do it without duplicate
+	zeroing
+	* fix coding style (moved/renamed some variables, removed useless
+	parens, etc.)
+
+2007-05-14 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Add KGDB support for Bamboo/Luan PPC4xx platforms
+
+2007-05-14 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Sanitize the bogus KGDB code for Xilinx ML300
+
+2007-05-14 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Replace all #include <asm/kgdb.h> by #include <syslib/gen550.h>
+	as the new KGDB header doesn't have the necessary prototypes
+	anymore.
+
+2007-05-11 Jason Wessel <jason.wessel@windriver.com>
+	* Merged all the outstanding mips exception handling patches
+
+2007-05-10 Jason Wessel <jason.wessel@windriver.com>
+	* Change calls from hard_smp_processor_id to smp_processor_id to
+	obtain the correct behavior for thread lists on X86
+
+2007-05-10 Bob Picco <bob.picco@hp.com>
+	* Acquire the pt_regs for kgdb IPI.
+
+2007-05-10 Bob Picco <bob.picco@hp.com>
+	* Remove hardware breakpoint support from ia64 lite patch.
+
+2007-05-09 Jason Wessel <jason.wessel@windriver.com>
+	* Fix ARM pc to advance on detach and kill operations from the gdb
+	serial protocol, similar to the continue operation.
+
+2007-05-09 Paul Gortmaker <paul.gortmaker@windriver.com>
+	* Fix cpm_uart early setup
+
+2007-05-09 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Update KGDB serial driver for CPM UART
+
+2007-05-09 Jason Wessel <jason.wessel@windriver.com>
+	* Remove select STACK_UNWIND at it is deprecated and was part of
+	the old CFI annotations and there is currently no code that uses
+	it.
+
+2007-05-08 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Add/fix KGDB support in arch/ppc/syslib/ppc8[35]xx_setup.c
+
+2007-05-07 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Fix errors/warnings in the PXA and AMBA PL011 UARTs' KGDB serial
+	drivers
+
+2007-05-06 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Update KGDB serial driver for Toshiba TX49xx
+
+2007-05-06 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Get rid of *all* the remains of the MIPS-specific KGDB
+	implementation.  While at it, fix #ifdef's in
+	arch/mips/sibyte/sb1250/irq.c -- the kernel would not build if a
+	user selected some other KGDB driver than kgdb_sibyte.c
+
+2007-05-04 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Remove the CONFIG_NETPOLL_RX and cleanup CONFIG_NETPOLL* select
+	kernel config options
+
+2007-05-04 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Fix inconsistencies with calling KGDB driver's pre_exception()
+	and post_exception() methods
+
+2007-05-04 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* Fix inconsistencies with calling KGDB driver's pre_exception()
+	and post_exception() methods
+
+2007-05-03 Jason Wessel <jason.wessel@windriver.com>
+	* Merged in the 2.6.18testing git tree as well as the
+	2.6.18master tree from the kernel.org kgdb git tree
+	These pataches apply to the 2.6.21.1 kernel.org kernel
+
+2007-03-12 Jason Wessel <jason.wessel@windriver.com>
+	* Ported KGDB with the exception of sh and cfi-annotations
+	to 2.6.21rc3.
+
+2007-02-01 Sergei Shtylyov <sshtylyov@ru.mvista.com>
+	* fixed unnecessary messages emitted by the RTL 8139too on 
+	kgdboe
+
+2006-10-09 Przemyslaw Brojewski <przemek@my.tenbit.pl>
+	* Fixed typo in sh-lite.patch for drivers/serial/sh-sci.c
+
+2006-10-04 Vitaly Wool <vitalywool@gmail.com>
+	* Added ppc32 support for kgdb in arch/powerpc
+
+2006-10-03 Milind Dumbare <milind@linsyssoft.com>
+	* Moved weak definitions to kernel/kgdbarchlib.c to get 
+	rid of gcc-4.1 bug.
+
+2006-08-30 Vitaly Wool <vitalywool@gmail.com>
+	* Fixed softlockup bug.
+
+2006-07-10 Milind Dumbare <milind@linsyssoft.com>
+	* Moved to 2.6.17
+
+2006-07-05 Kevin Hilman <khilman@deeprooted.net>
+	* Fixed restore of CPSR in kgdb_fault_longjmp on ARM.
+
+2006-06-22 Andi Kleen <ak@suse.de>
+	Milind Dumbare <milind@linsyssoft.com>
+	* Replaced occurrences of checks of
+	pidhash_init_done by checks of last_pid in core-lite.patch.
+
+2006-06-08 Milind Dumbare <milind@linsyssoft.com>
+	* Moved to 2.6.16.20
+
+2006-06-01 Milind Dumbare <milind@linsyssoft.com>
+	* Moved to 2.6.16.19
+
+2006-05-18 Bob Picco <bob.picco@hp.com>
+	* ia64 updates, split some code out into ia64.patch
+
+2006-05-18 Tom Rini <trini@kernel.crashing.org>
+	* Add back missing __ASSEMBLY__ in <asm-mips/kgdb.h>
+	* Fix a ARCH=ppc thinko, reference kgdb.o not ppc-stub.o
+
+2006-04-25 Milind Dumbare <milind@linsyssoft.com>
+	 Geoff Levand <geoffrey.levand@am.sony.com>
+	* Moved to 2.6.16
+	* fixed mips register data.
+
+2006-04-20 Tom Rini <trini@kernel.crashing.org>
+	* Fix building PPC machines with CPM1/CPM2 uart driver enabled, but
+	  not KGDB_CPM_UART
+
+2006-04-05 Bob Picco <bob.picco@hp.com>
+	* Move kgdb_sync_softlockup from core-lite to core.
+
+2006-04-05 Dmitry Antipov <antipov@ru.mvista.com>
+	* Don't put to sleep uart ports that are in use for KGDB console.
+
+2006-04-05 Todd Poynor <tpoynor@mvista.com>
+	* Remove <linux/dwarf2-defs.h> in mrproper
+
+2006-04-05 Geoff Levand <geoffrey.levand@am.sony.com>
+	* Fix build of CONFIG_KGDB=y && CONFIG_KGDB_8250=n on MIPS
+	* Various build / warning fixes for MIPS
+
+2006-03-17 Milind Dumbare <milind@linsyssoft.com>
+	* Kgdb-2.4 Released
+	* Moved to 2.6.15.5
+
+2006-03-17 Xavier Bru <xavier.bru@bull.net>
+	* Fixed the problem of softlockup watchdog hit.
+
+2006-03-09 Jason Wessel <jason.wessel@windriver.com>
+	* Changed the rs232 config options to be mmio,mmap, and io.
+
+2006-03-06 Jason Wessel <jason.wessel@windriver.com>
+	* Updated the KGDB Reboot support to send and OK packet
+	and use machine_reset() so that reboot works if you
+	use it from an interrupt context.
+
+2006-02-25 Dale Farnsworth <Dale.Farnsworth@mvista.com>
+	* Fixed Cope with singlestep on critical exception stack on ppc.
+
+2006-02-22 Jitendra Pawar <jitendra@linsyssoft.com>
+	*  Reverted the cvs to the state as of 2006-02-19.
+
+2006-02-22 Jitendra Pawar <jitendra@linsyssoft.com>
+	*  Fixed the compilation problems in yesterday's check in. 
+
+2006-02-21 Jitendra Pawar <jitendra@linsyssoft.com>
+	*  Fixed the problem of duplicate chunks in the latest cvs, 
+	   that was occured due to yesterday's check in.
+
+2006-02-20 Dennis W. Tokarski <dwt@PolTec.COM>
+	*  Implemented support for hardware watchpoints for i386 architecture.
+
+2006-02-14 Milind Dumbare <milind@linsyssoft.com>
+	*  Fixed deadlock which might have caused due to removal
+	of breakpoints.
+
+2006-02-02 Bob Picco <bob.picco@hp.com>
+	   Milind Dumbare <milind@linsyssoft.com>
+	* Fixed alignment of break instruction address in kgdb_set_sw_break
+	* Fixed problem in breakpoint state transition in remove_all_break.
+
+2006-01-31 Jitendra Pawar <jitendra@linsyssoft.com>
+	* Fixed handling of NMI on i386.
+
+2006-01-13 Bob Picco <bob.picco@hp.com>
+	* Fixed various register fetch/put methods and does a general
+	code clean up and restructuring for fetch/put for ia64.
+
+2006-01-12 Tom Rini <trini@kernel.crashing.org>
+	* Complete merge of ppc/ppc64-lite into powerpc-lite.patch.
+
+2006-01-11 Milind Dumbare <milind@linsyssoft.com>
+	* Removed unneeded switch_to stuff from i386-lite.patch
+	(include/asm-i386/system.h).
+	* Added weak declarations for kgdb_arch_set_breakpoint &
+	kgdb_arch_remove_breakpoint.
+
+2006-01-11 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	   Amit S. Kale <amitkale@linsyssoft.com>
+	* Converted the procindebug to an array of atomic_t type.
+	* Removed barrier() call while wait for the slave processors to
+	enter or leave KGDB.	
+
+2006-01-10 Milind Dumbare <milind@linsyssoft.com>
+	* Moved softlockup bug fix changes from core-lite.patch to core.patch.
+	* Added core.patch to series file.
+
+2006-01-09 Bob Picco <bob.picco@hp.com>
+	* Fixed warnings in kgdb_get_mem, kgdb_set_mem, kgdb_set_sw_break.
+
+2006-01-06 Amit Kale <amitkale@linsyssoft.com>
+	   Girish Shilamkar <girish@linsyssoft.com>
+	* Callback function softlockup_tick prevented to be called when KGDB has run, to 
+	avoid soft lockup detection error been displayed on the console after continuing.
+
+2006-01-06 Amit S. Kale <amitkale@linsyssoft.com>
+	   Milind Dumbare <milind@linsyssoft.com>
+	* fix for memory read check before declaring a breakpoing to be set
+
+2006-01-06 Milind Dumbare <milind@linsyssoft.com>
+	* Move to 2.6.15.
+
+2005-12-27 Milind Dumbare <milind@linsyssoft.com>
+	* Ported fix to x86_64 for panic that occurs on smp systems on deletion or disabling
+	of a breakpoint.
+
+2005-12-11 Milind Dumbare <milind@linsyssoft.com>
+	   Wessel Jason <jason.wessel@windriver.com>
+	* Implemented the reboot feature.
+
+2005-12-05 Amit S. Kale <amitkale@linsyssoft.com>
+	   Milind Dumbare <milind@linsyssoft.com>
+	* Fixed panic that occurs on smp systems on deletion or disabling 
+	of a breakpoint.
+
+2005-12-01 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.15-rc4 (no code change).
+	* Reorder the patches so that it goes core, 8250, netpoll-fixup,
+	eth, arches.
+	* Merge ppc64-lite into ppc32-lite and rename ppc32-lite to
+	powerpc-lite.
+
+2005-12-01 Bob Picco <bob.picco@hp.com>
+	* Update ia64.
+
+2005-12-01 Vitaly Bordug <vbordug@ru.mvista.com>
+	* Bugfixes for PowerPC CPM uart driver.
+
+2005-11-30 Bob Picco <bob.picco@hp.com>
+	*  fixed compiler warning introduced when changing kgdb8250_opt
+	to establish mapbase instead of membase.
+	*  Avoiding  clobbering options	which might have already been
+	established by kgdb8250_opt from the boot command line.
+
+2005-11-30 Tom Rini <trini@kernel.crashing.org>
+	   Milind Dumbare <milind@linsyssoft.com>
+	* Move to 2.6.15-rc3.
+
+2005-11-30 Amit S. Kale <amitkale@linsyssoft.com>
+	* Fixed SIGSEGV that occurs when other processors are allowing to run
+	during a single step.
+
+2005-11-16 Milind Dumbare <milind@linsyssoft.com>
+	* fixed target kernel lock-ups due to breakpoints at
+	kfree or __kmalloc when debugging over ethernet.
+
+2005-11-15 Amit S. Kale <amitkale@linsyssoft.com>
+	* fixed connection failed errors (E22) and the ?? gdb showed on an 
+	early connect from kgdbwait. 
+
+2005-11-14 Tom Rini <trini@kernel.crashing.org>
+	* Make sure when kgdb8250 is a module we don't ask extra
+	questions.
+
+2005-11-14 Bob Picco <bob.picco@hp.com>
+	* Make the 'mmio' kgdb8250 param mean an unmapped address.
+
+2005-11-14 Sergey Podstavin <spodstavin@ru.mvista.com>
+	* Correct MIPS support to handle certain exceptions when KGDB is
+	enabled.
+
+2005-11-11 Tom Rini <trini@kernel.crashing.org>
+	* Rework Jason's patch to be more concise.
+	* Add to DocBook about reconfiguring KGDBOE.
+
+2005-11-11 Jason Wessel <jason.wessel@windriver.com>
+	* Add kgdboe sysfs support for re-configuring network.
+	* Reconfigure with:
+	  # echo @/,@10.1.1.1/ > /sys/module/kgdboe/paramaters/kgdboe
+	* Unconfigure with:
+	  # echo not_configured > /sys/module/kgdboe/paramaters/kgdboe
+	* Allow kgdboe to be a module anytime.
+	* Allow kgdboe to dynamically figure out the MAC of the gdb box.
+	* Add "R0" command to reboot the target:
+	  Extremely useful for extended gdb connections, ie:
+	  $ gdb
+	  (gdb) tar extended-remote udp:10.1.1.1:6443
+	  (gdb) run
+	  The program being debugged has been started already.
+	  Start it from the beginning? (y or n) y
+	  ...
+	  gdb will come back up and replant breakpoints
+
+
+2005-11-09 Tom Rini <trini@kernel.crashing.org>
+	* Reorder kgdboe functions to drop forward declarations.
+	* Cleanup messages about changing I/O drivers.
+
+2005-11-04 Bob Picco <bob.picco@hp.com
+	* Update ia64 patch.
+
+2005-11-03 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.14
+	* Bring back CHECK_EXCEPTION_STACK() for now.
+	* Copy Xscale UART fixup from main 8250 driver.
+	* Use TRAP() macro on ppc32.
+
+2005-11-03 Geoff Levand <geoffrey.levand@am.sony.com>
+	* Trap fixups on ppc64.
+	* Rewrite 8250 driver init.
+	* Add a hook for the kgdb8250 driver into uart_add_one_port().
+
+2005-11-03 Vitaly Bordug <vbordug@ru.mvista.com>
+	* PPC CPM UART support.
+
+2005-09-29 Geoff Levand <geoffrey.levand@am.sony.com>
+	* Fix a race on SMP ppc64, and bump ROUNDUP_WAIT
+
+2005-09-28 Tom Rini <trini@kernel.crashing.org>
+	* Rename the "no context" do_page_fault check to use a new DIE
+	code.
+
+2005-09-01 Tom Rini <trini@kernel.crashing.org>
+	* Kill CURRENTPORT (and kgdb8250_ttyS) in favor of a
+	current_port pointer.
+	* Rework the ppc64 code to register all legacy ports they find
+	with us.
+	* Add a kgdb_ioread/write wrapper around all of our shifts/etc.
+	* In kgdb8250_interrupt we don't need to verify we're on the
+	right IRQ, nor that we aren't in the debugger (could hang).
+	* Add the basic functions to the serial_txx9 driver, from Ralf
+	Baechle.
+	* Further rework and cleanup the 8250 driver.  CONFIG stuff is
+	much simpiler now.
+	* Really kill CHECK_EXCEPTION_STACK code.
+	* Change some '//' to '/* ... */'
+	* Reorder a few hunks of patches so we aren't remodifying files
+	when we don't have to.
+
+2005-08-29 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.13 release (no functional change).
+
+2005-08-22 Wade Farnsworth <wfarnsworth@mvista.com>
+	* Add support for KGDB on ppc440EP (Bamboo)
+
+2005-08-22 Tom Rini <trini@kernel.crashing.org>
+	* Add a WANT_EXTRA_DEBUG_INFORMATION that select's what we used
+	to have default to y on KGDB.
+
+2005-08-18 Dale Farnsworth <dale@farnsworth.org>
+	* Fix 2 thinkos on the Ocotea ppc board.
+
+2005-08-16 Corey Minyard <cminyard@mvista.com>
+	   Robert Picco <Robert.Picco@hp.com>
+	* A bugfix and an optimization in the SMP case.  Seen on various
+	big x86_64 boxes.
+	* Add back missing hook for x86_64 bad memory reads.
+
+2005-08-09 Manish Lachwani <mlachwani@mvista.com>
+	* MIPS-specific bugfixes on MIPS64.
+
+2005-08-09 Tom Rini <trini@kernel.crashing.org>
+	* On Russell King's advice switch our 8250 driver to using
+	ioread8/iowrite8/ioport_map.
+
+2005-08-08 Robert Picco <Robert.Picco@hp.com>
+	   Tom Rini <trini@kernel.crashing.org>
+	* Rework x86_64 to have an early_trap_init / similar, and thus
+	kill the CHECK_EXCEPTION_STACK hook & related workarounds.
+
+2005-08-07 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.13-rc6.
+	* Rework 8250 hooks to be a lot less intrusive and be more
+	correct.  Other minor changes based on comments from Russell
+	King.
+
+2005-08-02 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.13-rc5.
+	* Make 8250 the default I/O choice, and SIMPLE_SERIAL the
+	default too.
+	* Fix a problem in cfi_annotations with gcc-2.95.x/binutils-2.14
+
+2005-08-01 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.13-rc4.
+
+2005-07-29 Tom Rini <trini@kernel.crashing.org>
+	* Lots and lots of little cleanups all over the place.  Commit what
+	submitted to lkml.
+
+2005-07-15 Tom Rini <trini@kernel.crashing.org>
+	* Bugfix on x86_64 cleanup, tested by Amy Fong
+	<corfsczv@umail.furryterror.org>
+
+2005-07-14 Tom Rini <trini@kernel.crashing.org>
+	* Add a test for !kgdb_setting_breakpoint to kgdboe to fix
+	second trigger on connect.
+	* Only send 17 threads/packet on 'info threads' so we can't
+	exceed 399 bytes (buffer on GDB on ARM).
+	* Correct BUFMAX on ARM and SuperH to be 400 to match GDB.
+	* Move to 2.6.13-rc3.
+
+2005-07-08 Frank Rowand <frowand@mvista.com>
+	* Reworked serial changes so that ia64 works again.
+
+2005-07-08 Geoff Levand <geoffrey.levand@am.sony.com>
+	* Misc build fixes.
+
+2005-07-07 Robert Picco <Robert.Picco@hp.com>
+	* Cleanup setjmp/longjmp on ia64
+
+2005-07-07 Tom Rini <trini@kernel.crashing.org>
+	* Fix a thinko in 8250 patch.
+
+2005-07-06 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.13-rc2.
+
+2005-07-05 Manish Lachwani <mlachwani@mvista.com>
+	* Bugfix on MIPS with FPU emulation (Malta).
+
+2005-07-05 Frank Rowand <frowand@mvista.com>
+	* Minor cleanup to ppc64 support.
+
+2005-07-01 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.13-rc1.
+
+2005-06-29 Frank Rowand <frowand@mvista.com>
+	* ppc64 support.
+
+2005-06-29 Robert Picco <Robert.Picco@hp.com>
+	* Add setjmp/longjmp support to ia64.
+
+2005-06-28 Tom Rini <trini@kernel.crashing.org>
+	* Rebase was wrong, and commit a minor x86_64 fix (so that
+	cfi_annotations isn't required).
+
+2005-06-28 Amit S. Kale <amitkale@linsyssoft.com>
+	* Do a clean rebase to 2.6.12
+
+2005-06-25 Tom Rini <trini@kernel.crashing.org>
+	* Drop DIE_DEBUGSTEP
+
+2005-06-23 Amit S. Kale <amitkale@linsyssoft.com>
+	* Add asmlinkage keyword to kgdb_fault_{set,long}jmp.
+
+2005-06-21 Tom Rini <trini@kernel.crashing.org>
+	* SysRq bugfix from George Anzinger.
+	* Fix reads/writes to work with iomapped memory areas.
+	* Add kgdb_fault_{set,long}jmp to deal with bad memory accesses.
+	* Revert 5-04-06 Jason Wessel changes from 2005-04-06 as GDB did
+	not take the corresponding changes.
+
+2005-06-20 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.12
+
+2005-06-15 Tom Rini <trini@kernel.crashing.org>
+	* Add CFI annotations to x86_64
+
+2005-06-14 Tom Rini <trini@kernel.crashing.org>
+	* Fix a potential race on ppc32, from Frank Rowand.
+	* Have KGDB_NOMODULE also select NETPOLL stuff.
+
+2005-06-13 Manish Lachwani <mlachwani@mvista.com>
+	* Add ARM Versatile support.
+
+2005-06-13 George Anzinger <george@mvista.com>
+	* Add CFA_undefine_reg(pc) to __CFI_END_FRAME, as GDB can make
+	use of this information.
+
+2005-06-10 Tom Rini <trini@kernel.crashing.org>
+	* Fix x86_64 && !SMP
+
+2005-06-07 Geoff Levand <geoffery.levand@am.sony.com>
+	* Fix a thinko in CFI annotations.
+
+2005-05-25 Tom Rini <trini@kernel.crashing.org>
+	* Add dwarf2 CFI annotations to i386 and ARM.  This will help
+	GDB know when to stop backtracing.
+
+2005-05-13 Amy Fong <amy.fong@windriver.com
+	* On PPC32 BookE machines we need to set DBCR0_IC | DBCR0_IDM on
+	when single stepping.
+
+2005-05-03 Frank Rowand <frowand@mvista.com>
+	* Ensure that gdb_regs[] is rounded up if NUMREGBYTES is not a
+	multiple of sizeof(unsigned long)
+
+2005-04-28 George Anzinger <george@mvista.com>
+	* Fix getthread() to make use of idle_task().
+
+2005-04-28 Nicolas Pitre <nico@cam.org>
+	* ARM PXA uart support.
+
+2005-04-28 George Davis <gdavis@mvista.com>
+	* ARM OMAP uart support
+	* Fix kgdbwait and early breaking on ARM
+
+2005-04-28 Tom Rini <trini@kernel.crashing.org>
+	* ppc85xx KGDB work from Scott Hall <shall@mvista.com>,
+	including reworking the 8250 hooks to really work on shared
+	IRQs.
+	* PPC Marvel serial driver from Randy Vinson <rvinson@mvista.com>.
+	* Rename KGDB_TTYSN to KGDB_PORT_N, as this is used in other
+	uart drivers now.
+
+2005-04-08 Tom Rini <trini@kernel.crashing.org>
+	* Numerous minor cleanups.
+
+2005-04-08 George Davis <gdavis@mvista.com>
+	* osk_serial_ports is just a table of boolean values.
+
+2005-04-06 Randy Vinson <rvinson@mvista.com>
+	* Fix IBM750FX/GX support.
+
+2005-04-06 Jason Wessel <jason.wessel@windriver.com>
+	* Fix a protocol error with q[fs]ThreadInfo.  The last packet we
+	send back must use 'l', not 'm' to identify it as the last
+	packet.
+
+2005-03-16 Jason Wessel <jason.wessel@windriver.com>
+	* Rewrite to allow for modular KGDB.
+
+2005-03-10 Bob Picco <bob.picco@hp.com>
+	* Various ia64 fixes.
+
+2005-03-07 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.11
+
+2005-02-27 Jason Wessel <jason.wessel@windriver.com>
+	* Fix kgdb_eth to not try and schedule a breakpoint when GDB
+	and ACK for a disconnect packet.
+
+2005-02-23 Geoff Levand <geoffrey.levand@am.sony.com>
+	   Tom Rini <trini@kernel.crashing.org>
+	* Support for TI OSK5912 (ARM) platform.
+
+2005-02-18 Tom Rini <trini@kernel.crashing.org>
+	* Add two more closing para tags, fixes some problems with older
+	docbook tools
+
+2005-02-09 Deepak Saxena <dsaxena@plexity.net>
+	* Added support for the IXP2000 ARM platforms.
+
+2005-02-08 Manish Lachwani <mlachwani@mvista.com>
+	* Make kgdb_roundup_cpus() pass the current IRQ state so that
+	MIPS can re-enable interrupts for smp_message_pass().
+
+2005-02-08 Tom Rini <trini@kernel.crashing.org>
+	* Fix SH port by removing a last linux_debug_hook call.
+	* In some ppc32 ports we referenced an incorrect variable for
+	serial setup
+
+2005-02-01 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Fixed the incorrect reporting of registers on x86_64.
+	* Used IPI (sent with NMI flag) to halt all the CPUs on 
+	x86_64 SMP when the NMIs do not work.
+
+2005-01-21 Tom Rini <trini@kernel.crashing.org>
+	* Revert get_char()/put_char() as it's not doing what we wanted
+	now.
+	* Add a request_mem_region() call into kgdb8250_hookup_irq()
+	* (Noted by Mithlesh) add <asm/apicdef.h> to x86_64's kgdb.c
+
+2005-01-06 Amit S. Kale <amitkale@linsyssoft.com>
+	* Reverted last two incorrect checkins done on 04 and 05.
+
+2005-01-05 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* The diff is not proper. so fixed the diff.
+
+2005-01-04 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Moved to 2.6.10
+	* Fixed incorrect reporting of registers on x86_64 platform.
+
+2004-12-22 Tom Rini <trini@kernel.crashing.org>
+	* Add a CACHE_FLUSH_IS_SAFE flag so that some arches, such as
+	MIPS can avoid doing harmful flushes.
+	* Document CACHE_FLUSH_IS_SAFE and CHECK_EXCEPTION_STACK
+
+2004-12-22 George Anzinger <ganzinger@mvista.com>
+	* Change the last for_each_online_cpu to a loop over NR_CPUS
+
+2004-12-21 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	   Tom Rini <trini@kernel.crashing.org>
+	* Add back in set/put_char, make use of.
+
+2004-12-16 Tom Rini <trini@kernel.crashing.org>
+	* In sh-lite, make the choice of uart speed depend on KGDB &&
+	!KGDB_ETH, not just !KGDB_ETH.
+	* Add a stub for debugger_active for building with !KGDB,
+	this was lost when <linux/debugger.h> died.
+
+2004-12-14 Tom Rini <trini@kernel.crashing.org>
+	* Add SuperH support.
+
+2004-12-14 Robert Picco <Robert.Picco@hp.com>
+	   Amit S. Kale <amitkale@linsyssoft.com>
+	* Fix MP ia64 (use kgdb_roundup_cpu hook, Robert)
+	* Correct a spinlock issue in kgdb_handle_exception (Robert)
+	* Don't call kgdb_roundup_cpu if !debugger_step ||
+	!kgdb_contthread (Robert & Amit).
+	* Check for port->irq not port->line in our 8250 hooks (Robert).
+
+2004-12-12 Deepak Saxena <dsaxena@plexity.net>
+	* Add ARM support.
+
+2004-12-09 Deepak Saxena <dsaxena@plexity.net>
+	* Don't use BASE_BAUD of we have a uartclk definition.
+
+2004-12-09 Tom Rini <trini@kernel.crashing.org>
+	* Remove save/restore_irq from the 8250 driver.
+
+2004-12-08 Manish Lachwani <mlachwani@mvista.com>
+	* Remove save/restore_irq from the Sibyte UART driver.
+
+2004-12-07 Manish Lachwani <mlachwani@mvista.com>
+	* Fix MIPS so that we don't call trap_init() twice, in the
+	case of KGDB compiled in, but not stopped at boot.
+
+2004-12-06 George Anzinger <ganzinger@mvista.com>
+	* Change cpu_doing_single_step to use ATOMIC_INIT().
+
+2004-12-06 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.10-rc3
+	* Remove duplicate init's of already 0 varliables.
+	* Merge console.patch into core-lite.patch
+
+2004-12-01 Tom Rini <trini@kernel.crashing.org>
+	* Add kgdb_roundup_cpus().  Implement on i386 & x86_64.
+	* Add kgdb_msg_write() for sending 'O' packets.  Use for when
+	we can't get all of the CPUs rounded up, and in console.patch
+
+2004-11-19 Tom Rini <trini@kernel.crashing.org>
+	* Register with the panic notifier.
+
+2004-11-17 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.10-rc2
+	* Fix i386/x86_64/MIPS notify handlers for userland GDB
+	being run.
+	* Cleanup / update help text for virtually all entries.
+	* Make the tasklet check CHECK_EXCEPTION_STACK()
+	  * On x86_64, have trap_init() schedule our tasklet.
+	* Move Tigran's credits to i386/kgdb.c (Amit's suggestion).
+	* Fix a buglet in i386 fault.c (check for NOTIFY_STOP, not BAD).
+	* Remove redundant kgdb_contthread checks in arch 's'/'c' handlers
+	as this is done in the main loop.
+	* Fix x86_64 compile, remove extra whitespace changes.
+	* Kill include/linux/debugger.h and its abstractions.  This
+	is done better with notify lists as we see now.
+	* Cleanup include/linux/kgdb.h include list.
+	* KGDB_MAX_NO_CPUS is dead.
+	* Other minor cleanups.
+
+2004-11-16 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Update modules.patch for 2.6.10-rc2
+
+2004-11-08 Tom Rini <trini@kernel.crashing.org>
+	* Add Matt Porter's 40x || BOOKE debug patch to the series.
+	* Update ppc-lite so that all boards that were using the gen550
+	infrastructure for KGDB now use our infrastructure.
+
+2004-11-05 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Spiltted core.patch into module.patch and console.patch. Removed the
+	thread level debugging support from core.patch
+	* removed x86_64.patch, ia64.patch and core.patch
+	* Added schedfix.patch which now recognises context frames.
+
+2004-11-01 Tom Rini <trini@kernel.crashing.org>
+	* Remove kgdb_schedule_breakpoint() / kgdb_process_breakpoint()
+	in favor of using tasklets (suggested by Andi Kleen).
+	* On x86_64, add a DIE_DEBUGSTEP notifier call.  This was
+	suggested by Andi Kleen and non-KGDB portions accepted by him.
+
+2004-10-30 Tom Rini <trini@kernel.crashing.org>
+	* Fix 40x || BOOKE support on ppc32, based on Matt Porters work.
+
+2004-10-29 Olaf Hering <olh@suse.de>
+	* Remove duplicate debugger_active check in __might_sleep
+
+2004-10-29 Tom Rini <trini@kernel.crashing.org>
+	* Trailing whitespace cleanup of the patches.
+
+2004-10-29 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Moved addition of *debuggerinfo to thread struct from x86_64-lite
+	to x86_64.patch
+
+2004-10-28 Tom Rini <trini@kernel.crashing.org>
+	* Split x86_64 into a -lite patch, and not.
+	* Move to 2.6.10-rc1
+	* Put back checks to make sure that we only use kernel addresses.
+
+2004-10-27 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Fix the 'info thread' bug by returning current thread if 'pid_hash'
+	is not setup.
+
+2004-10-26 Amit S. Kale <amitkale@linsyssoft.com>
+	* Added __switch_to_begin and __switch_to_end labels so that gdb can
+	figure out when program control is in context switch code.
+
+2004-10-25 Takeharu KATO <kato.takeharu@jp.fujitsu.com>
+	* Fix a typo on ppc32 (DBCR_* -> DBCR0_*)
+	* Set debugger_step = 1 when single stepping on ppc32
+
+2004-10-20 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Added the options for thread debugging and console messages
+	to config which got removed while moving KGDB with the Kernel.
+
+2004-10-20 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Moved to 2.6.9.
+
+2004-10-20 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Removed the refernce to get_char() from kernel/kgdb.c
+
+2004-10-18 Manish Lachwani <mlachwani@mvista.com>
+	* Remove some cruft on MIPS.
+
+2004-10-18 Deepak Saxena <dsaxena@plexity.net>
+	* request_irq() needs to pass a non-NULL dev_id
+	* Only call ioremap() if requested to by the flags set on the uart.
+
+2004-10-18 Tom Rini <trini@kernel.crashing.org>
+	* Add 'X' packet support and make X/M packets return OK if they
+	succeed.
+
+2004-10-15 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Fixed SMP race while single stepping.
+	* Fixed spurious interrupts which occured on serial line when NMI
+	support doesnt work correctly.
+	* Cleaned the usage of x86 and x86_64 flags.
+
+2004-10-13 Manish Lachwani <mlachwani@mvista.com>
+	* More MIPS updates.
+
+2004-10-13 Tom Rini <trini@kernel.crashing.org>
+	* Rework init sequence.
+
+2004-10-11 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.9-rc4.
+
+2004-10-08 Manish Lachwani <mlachwani@mvista.com>
+	* Fix MIPS64 with a new trap handler.
+
+2004-10-07 Tom Rini <trini@kernel.crashing.org>
+	   Manish Lachwani <mlachwani@mvista.com> (some MIPS portions)
+	* Change 'select' of DEBUG_INFO / FRAME_POINTER to
+	default y if ... as select shouldn't be used on user-visible symbols.
+	* kgdb_serial has become kgdb_io.
+	* We now have kgdb_io_ops ala arch_kgdb_ops.
+	* Remove all cmdline params except for kgdbwait, kgdb8250, kgdboe
+	* Document what each of these does, as well as the order they must
+	be in.
+	* Other updates to teh DocBook template.
+	* kgdb_break_early is now gone.
+	* Pass current->mm->mmap_cache to flush_cache_range(...) after
+	talking with Manish Lachwani.
+	* Make kgdb_entry() be the one to check CHECK_EXCEPTION_STACK().
+	* Put #ifdef around sysrq stuff to kill a warning.
+	* Mark more things static in 8250 now.
+	* In parsing kgdb8250= only parse the IA64 options on IA64.
+	* Mark more things static in arch/mips/kernel/kgdb.c
+	* Move breakpoint_mips logic to BREAKPOINT().
+	* Have kgdb_arch_init on mips always call set_debug_traps().
+	* Slight rework of kgdb_mips_break_early logic / var name to
+	'work' now that kgdb_break_early is gone.
+	* Update SiByte duart driver
+	* Remove get_char / set_char from kgdb.c as well as the unused
+	kgdb_useraccess.
+
+2004-10-02 Amit S. Kale <amitkale@linsyssoft.com>
+	* Reports eflags correctly.
+	* Corrected reporting of esp. We don't need the esp+8 approximation
+	now that gdb can do it.
+
+2004-10-01 Tom Rini <trini@kernel.crashing.org>
+	* Merge to 2.6.9-rc3.
+
+2004-09-30 Manish Lachwani <mlachwani@mvista.com>
+	* (MIPS32) SiByte 1250 support
+
+2004-09-23 Tom Rini <trini@kernel.crashing.org>
+           Ananth N Mavinakayanahalli <ananth@in.ibm.com>
+	* Merge to 2.6.9-rc2.
+	* Make 8250 use 'struct uart_port'
+	* Move everything into lib/Kconfig.debug
+	* i386 has now switched to a notifier chain.
+
+2004-09-17 Manish Lachwani <mlachwani@mvista.com>
+	* Fix MIPS BE support.
+
+2004-09-21 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Added a check to ensure that KGDB doesn't break before the 
+	  exception tables are set on x86_64 platform. 
+
+2004-09-16 Manish Lachwani <mlachwani@mvista.com>
+	* Add MIPS support.  Tested on MIPS Malta.
+
+2004-09-15 Tom Rini <trini@kernel.crashing.org>
+	* Move SysRq-G out of core.patch and into core-lite.patch (latter
+	  half of this done by the previous commit accidentally).
+
+2004-09-09 Deepak Saxena <dsaxena@plexity.net>
+	* Check to see if the address we are flushing is a user	or kernel
+	  address and calls the appropriate functon.
+
+2004-09-09 Tom Rini <trini@kernel.crashing.org>
+	   Deepak Saxena <dsaxena@plexity.net>
+	* Have CONFIG_SERIAL_8250_NR_UARTS be set on SERIAL_8250 || KGDB_8250
+	  and use this to ensure that RS_TABLE_SIZE exists and is that
+	  our rs_table[] will not be empty.  This is required for platforms
+	  such as XScale which always dynamically find their serial ports.
+	* XScale UARTs have two extra bits that needs to be set in the
+	  IER. For this reason we need to copy the type field from the uart
+	  struct.
+	* Replace SERIAL_IO_MEM with UPIO_MEM as this is the preferred usage.
+	* We were calling serial8250_release_irq(gdb_async_info.line) before
+	  calling kgdb_local_init, so gdb_async_info.line would be 0.
+	  Transposed the two calls.
+
+2004-09-08 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Changed the x86_64.patch so that it doesn't generate the 
+	debugging information for the vsyscall.c, which was causing
+	problems in module debugging.
+
+2004-08-17 Tom Rini <trini@kernel.crashing.org>
+	* Make kgdb_arch_init on ppc32 an arch_initcall(), as it must
+	be initialized if we have KGDB installed.
+	* On ppc32, have our function pointers check for !user_mode(regs)
+	before moving on.
+
+2004-08-16 Tom Rini <trini@kernel.crashing.org>
+	* Clarify in the README what the output will be.
+	* Note that we apply to 2.6.8-rc4, 2.6.8 and 2.6.8.1.
+
+2004-08-10 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.8-rc4.
+	* Redo kgdb_8250 hooks so that we always setup the serial port
+	so that we can break into a running system.
+	* For PPC32, make some CONFIG_4xx's be more correct as 40x || BOOKE
+
+2004-08-05 Keldon Jones <keldon@hp.com>
+	* Split ia64.patch into ia64-lite.patch and ia64.patch.
+	* Rename set_mem to kgdb_set_mem and make it global.
+	* Add and document {set,remove}{,_hw}_breakpoint kgdb_arch hooks.
+
+2004-08-04 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Fixed reporting of pid to value 0 when pidhash_init_done is not done.
+
+2004-08-03 Tom Rini <trini@kernel.crashing.org>
+	* Remove references to arch/ppc/syslib/ppc4xx_kgdb.c
+
+2004-08-02 Robert Picco <Robert.Picco@hp.com>
+	* Add ia64 support.
+
+2004-07-30 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Fixed a bug in core.patch, that was introduced by the change to skip
+	usage of debuggerinfo thread_struct member in lite patches.
+
+2004-07-29 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.8-rc2.
+
+2004-07-29 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Modified lite patches not to use the thread_struct member
+	debuggerinfo. Instead, defined a data structure where the
+	pt_regs pointers from slave cpus would be saved. Moved the
+	debuggerinfo member to heavy patches.
+	* Added documentation on usage of quilt for applying kgdb patches and
+	the changes in console messages because of early_param.
+
+2004-07-16 Tom Rini <trini@kernel.crashing.org>
+	* Make use of early_param() so that on i386 at least we can break
+	into KGDB early on.
+
+2004-07-14 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.8-rc1.
+
+2004-07-14 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Fixed compile errors in x86_64
+
+2004-07-09 Noriaki Takamiya <takamiya@po.ntts.co.jp>
+	* Typo fix in 8250.patch
+
+2004-07-01 Mithlesh Thukral <mithlesh@linsyssoft.com>
+	* Fixed a problem with overriding compile time port number from
+	the command line for simple serial port configurations.
+
+2004-06-28 Tom Rini <trini@kernel.crashing.org>
+	* Move to 2.6.7.
+
+2004-06-11 Tom Rini <trini@kernel.crashing.org>
+	* Change from nop's to busy-wait to cpu_relax();
+
+2004-06-10 Tom Rini <trini@kernel.crashing.org>
+	* Add my quilt series file to CVS, so others can more easily use
+	all of this.
+
+2004-05-21 Tom Rini <trini@kernel.crashing.org>
+	* Move all DocBook stuff into the main patches
+	* Remove duplicate stuff in core.patch
+
+2004-05-18 Tom Rini <trini@kernel.crashing.org>
+	* Move some code that was in '8250' into 'core-lite' where it belongs
+	* Kill kgdb_break_early, all we really need here, now, is
+	kgdb_schedule_breakpoint().
+	* Add missing PPC32 files.
+
+2004-05-17 Tom Rini <trini@kernel.crashing.org>
+	* Update to 2.6.6.
+
+2004-04-08 Tom Rini <trini@kernel.crashing.org>
+	* As Stelian Pop noted, it's possible for KGDB_CONSOLE && KGDB_ETH
+	to do bad things.  So we don't allow for it to happen, hopefully,
+	and note can happen both in the help and in the documentation.
+
+2004-04-08 Tom Rini <trini@kernel.crashing.org>
+	   Stelian Pop <stelian@popies.net>
+	* Make the eth and 8250 interfaces work based on cmdline args,
+	and module_init() cause an initial breakpoint. 
+	* Fixup the PPC32 driver for this as well.
+	* Fix support for the Motorola Sandpoint.
+
+2004-04-05 Stelian Pop <stelian@popies.net>
+	* Export either kern_schedule or do_schedule, in the core patch.
+	* Cleanup SysRq support.
+
+2004-04-05 Tom Rini <trini@kernel.crashing.org>
+	* Move some changes out of core-lite, into core, if we only ask
+	about them in the core patch.
+	* Update to 2.6.5.
+
+2004-03-30 Tom Rini <trini@kernel.crashing.org>
+	* Move i386 HW breakpoint code to i386.patch from i386-lite, it was
+	broken.
+	* Add an API for flushing all HW breakpoints.
+	* Cleanup the handling of z/Z[01] packets, send empty reply
+	on all other z/Z packets.
+	* Remove kgdb_printexception code, the 'E' packet is reserved.
+	* Update DocBook comments based on the textfile from Anurekh Saxena.
+	* On PPC32, depend on !SMP, as that code hasn't even been thought
+	about yet.
+
+2004-03-24 Tom Rini <trini@kernel.crashing.org>
+	* Add DocBook comments to all weak functions to the core patch, and
+	merge Documentation/kgdb.txt into the DocBook file.
+
+2004-03-22 Matt Mackall <mpm@selenic.com>
+	* Fix a thinko noticed by Andrew Morton in the eth patch.
+
+2004-03-22 Tom Rini <trini@kernel.crashing.org>
+	* Shrink the #include list of kgdb_eth.c and cleanup the top
+	comments.
+
+2004-03-20 Matt Mackall <mpm@selenic.com>
+	* Make sure the kgdboe driver won't be in a half-configured state
+
+2004-03-19 Tom Rini <trini@kernel.crashing.org>
+	* Update to 2.6.4.
+
+2004-03-19 Jim Houston <jim.houston@comcast.net>
+	* Fixes to x86_64 cfi directives
+
+2004-03-19 Amit S. Kale <amitkale@emsyssoft.com>
+	* Fixes to lite patches for getting correct thread listing.
+	* Fixed automatic module loading in gdb.
+
+2004-03-12 Amit S. Kale <amitkale@emsyssoft.com>
+	* SMP fixes for x86_64
+
+2004-03-08 Tom Rini <trini@kernel.crashing.org>
+	* Make PPC32 compile, and split it out into ppc and ppc-lite.
+
+2004-03-04 Amit S. Kale <amitkale@emsyssoft.com>
+	* Added some documentation to core-lite
+	* Fixed x86_64 kgdb. It didn't handle a debug exception when
+	connecting to gdb because kgdb_connected was zero.
+
+2004-03-01 Tom Rini <trini@kernel.crashing.org>
+	* On PPC32:
+	  - if 0 the changes to save call link in do_IRQ, buggy.
+	  - Provide correct hard_trap_info on 44x as well as 40x.
+	  - Add in #ifdefs for PPC_SIMPLE_SERIAL, kill kgdbppc_init,
+	    by moving work into kgdb_arch_init.
+	* Move all configuration options into kernel/Kconfig.kgdb
+	* Add SysRq-G support into core.patch.
+	* For the serial driver:
+	  - We don't need kgdb_might_be_resumed or kgdb_killed_or_detached.
+	  - Don't try and look for a connection in put_packet, after we've
+	    tried to put a packet.  Instead, when we receive a packet, GDB
+	    has connected.  Also make put_packet look at the char it reads,
+	    and handle a new packet in the middle (or ^C+packet).
+	  - Remove ok_packet().
+	  - In kgdb8250_interrupt, only check if this is the right line, and
+	    if so, call kgdb_schedule_breakpoint().  This still isn't 100%
+	    correct on SMP.
+	  - Remove a duplicate extern of kgdb_connected.
+	* On x86_64, make KGDB register with die_chain and remove all
+	instances of CHK_DEBUGGER.
+	* On PPC32, remove all CHK_DEBUGGER statements as we've always
+	registered with the arch-specific hooks.
+	* For the eth driver:
+	  - memset out_buf in case we don't have it full when we flush.
+	  - In rx_hook, if netpoll_trap() is set, clear it.  If kgdb_isn't
+	    connected, schedule a breakpoint, and never call breakpoint()
+	    directly.
+	  - In kgdb_serial->hook, call netpoll_set_trap(1).
+	    kgdb_serial->hook() must be called prior to using a 'serial'
+	    port, so this is where we should stick this.  Call
+	    netpoll_set_trap(0) in rx_hook if netpoll_trap().
+	  - Backout unneeded changes to other files.
+
+2004-02-25 Tom Rini <trini@kernel.crashing.org>
+	* Update the 8250 driver with various things from George Anzinger's
+	version.
+	* Add, and make use of kgdb_process_breakpoint /
+	kgdb_schedule_breakpoint().
+
+2004-02-25 Tom Rini <trini@kernel.crashing.org>
+	* Run scripts/Lindent over the new files in core-lite, i386-lite,
+	x86_64, 8250, eth patches.
+	* Rename arch/ppc/kernel/ppc-stub.c to arch/ppc/kernel/kgdb.c to
+	match others, and add back in include/asm-ppc/kgdb.h
+
+2004-02-21  Amit S. Kale <amitkale@emsyssoft.com>
+	* Restored calling convention of do_IRQ. Made kgdb walk up a stack,
+	find out pt_regs saved before calling do_IRQ and present the stack
+	before that it using a shadow thread.
+	* Fixed gdb lockup during info threads. Some cleanup had removed a
+	code line that terminated ThreadInfo packets.
+
+2004-02-21 Pavel Machek <pavel@suse.cz>
+	* Moved non-hacky parts of core.patch and i386.patch into
+	core-lite.patch and i386-lite.patch for ease of merging into mainline
+	kernel.
+
+2004-02-19 Pavel Machek <pavel@suse.cz>
+	* Removed an unecessary modification to generic_hweight64
+
+2004-02-19 Amit S. Kale <amitkale@emsyssoft.com>
+	* Moved to kernel 2.6.3
+
+2004-02-18 Tom Rini <trini@kernel.crashing.org>
+	* Make CHK_DEBUGGER not warn on !KGDB
+	* Don't reply to the sequence-id portion of a packet, this is illegal
+	http://sources.redhat.com/gdb/current/onlinedocs/gdb_33.html#SEC655
+
+2004-02-11 Amit S. Kale <amitkale@emsyssoft.com>
+	* Removed pc and sp in exception reporting to gdb
+
+2004-02-10 Amit S. Kale <amitkale@emsyssoft.com>
+	* Changed several functions to return negative error number instead of
+	-1 to be consistent with the kernel
+	* Removed use of a global to detect memory access errors in kgdb by
+	preventing kgdb from accessing user addresses
+	* Cleanups
+	* From someone - Fixed a buffer overflow in getpacket.
+
+2004-02-05 Tom Rini <trini@kernel.crashing.org>
+	* Go back to kgdb_serial fn pointer.
+	* Fixes to kgdb over ethernet
+
+2004-01-30 Tom Rini <trini@kernel.crashing.org>
+	* Change *kgdb_serial into kgdb_serial_driver.  We will now have
+	only one serial driver.
+	* PPC32: Add KGDB support to the Motorola Sandpoint.
+
+2004-01-30 Pavel Machek <pavel@suse.cz>
+	* Convert the kgdb ethernet driver over to netpoll.
+
+2004-01-27 Tom Rini <trini@kernel.crashing.org>
+	* Send a 'T' packet initially, not an 'S' followed by 'p'
+	* On PPC32, try to pass in the correct signal back.
+	* Cleanups
+	* Remove the function pointers from kgdb_ops. Most have become
+	kgdb_foo, instead of foo. The exceptions are the gdb/kgdb register
+	fiddling functions.
+
+2004-01-21 TimeSys Corporation
+	* kgdb on powerpc.
+
+2004-01-21 Pavel Machek <pavel@suse.cz>
+	* Changes for coding conventions
+
+2004-01-21 Tom Rini <trini@kernel.crashing.org>
+	* Added a prototype for kgdb8250_add_port.
+
+2004-01-20 TimeSys Corporation
+	* Create a fake function frame at begining of common_interrupt so that
+	gdb can trace back from common_interrupt.
+
+2004-01-20 Amit S. Kale <amitkale@emsyssoft.com>
+	* Created a ring buffer for kgdb ethernet packets. Several
+	fixes and changes to kgdb on ethernet.
+
+2004-01-20 TimeSys Corporation
+	* Fixed a problem with not responding to Ctrl+C during priting of
+	console messages through gdb.
+
+2004-01-17 Tom Rini <trini@kernel.crashing.org>
+	* Some restructuring to allow architectures to provide different
+	serial infos to the kgdb serial interface.
+
+2004-01-17 Pavel Machek <pavel@suse.cz>
+	* Cleanups
+	* changed calling convention from 0 on success, 1 on failure to 0 on
+	success, -ERRNO on fail to be more consistent with rest of kernel
+	* Made kgdb waiting for connection message KERN_CRIT
+	* export kern_schedule only if CONFIG_KGDB_THREAD is defined
+
+2004-01-16 Amit S. Kale <amitkale@emsyssoft.com>
+	* Fixed compile errors when CONFIG_KGDB is not configured.
+	* Exported kern_schedule.
+	* Fixed invalid memory accesses when debuggerinfo is non-zero and
+	invalid.
+	* Spawn a thread for polling configuration of ethernet interface.
+
+2004-01-12 Pavel Machek <pavel@suse.cz>
+	* kgdbeth_opt does not initialize ipaddrptr -> this could not have
+	ever worked. [Okay, it still does not work].
+	* Add some basic documentation
+	* reply_arp can be static, AFAICS
+	* getDebugChar() no longer exists, kill it from the docs, read_char()
+	should be equivalent.
+	* eth_PutDebugChar() seems to be no longer used. Kill it.
+
+2004-01-12 Amit S. Kale <amitkale@emsyssoft.com>
+	* Fixed compile warnings about thref and thread when
+	CONFIG_KGDB_THREAD is not configured.

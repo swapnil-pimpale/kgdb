@@ -1,0 +1,28 @@
+mips64_pt_regs_padding.patch
+
+From: Jason Wessel <jason.wessel@windriver.com>
+Subject: [PATCH] pad pt_regs on MIPS64 for function arguments in an exception
+
+
+When using KGDB the pt_regs has the function arguments saved to the stack.
+48 bytes are required for MIPS 64 for this purpose.
+
+Signed-off-by: Jason Wessel <jason.wessel@windriver.com>
+
+---
+ include/asm-mips/ptrace.h |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+Index: linux-2.6.21.1/include/asm-mips/ptrace.h
+===================================================================
+--- linux-2.6.21.1.orig/include/asm-mips/ptrace.h
++++ linux-2.6.21.1/include/asm-mips/ptrace.h
+@@ -28,7 +28,7 @@
+  * system call/exception. As usual the registers k0/k1 aren't being saved.
+  */
+ struct pt_regs {
+-#ifdef CONFIG_32BIT
++#if defined(CONFIG_32BIT) || defined(CONFIG_KGDB)
+ 	/* Pad bytes for argument save space on the stack. */
+ 	unsigned long pad0[6];
+ #endif

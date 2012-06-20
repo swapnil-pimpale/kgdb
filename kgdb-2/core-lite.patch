@@ -1,0 +1,2678 @@
+core-lite.patch 
+
+From: Jason Wessel <jason.wessel@windriver.com>
+Subject: [PATCH] This is the core of the KGDB stub.  
+
+It provides all of the common code, documentation and basic Kconfig
+changes, as well as the common hooks.
+
+Signed-off-by: Milind Dumbare <milind@linsyssoft.com>
+Signed-off-by: Bob Picco <bob.picco@hp.com>
+Signed-off-by: Dmitry Antipov <antipov@ru.mvista.com>
+Signed-off-by: Tom Rini <trini@kernel.crashing.org>
+Signed-off-by: Jason Wessel <jason.wessel@windriver.com>
+---
+ Documentation/DocBook/Makefile  |    2 
+ Documentation/DocBook/kgdb.tmpl |  234 +++++
+ MAINTAINERS                     |    9 
+ include/asm-generic/kgdb.h      |  100 ++
+ include/linux/kgdb.h            |  290 ++++++
+ kernel/Makefile                 |    1 
+ kernel/kgdb.c                   | 1861 ++++++++++++++++++++++++++++++++++++++++
+ kernel/sched.c                  |    4 
+ lib/Kconfig.debug               |    2 
+ lib/Kconfig.kgdb                |   60 +
+ 10 files changed, 2562 insertions(+), 1 deletion(-)
+ create mode 100644 Documentation/DocBook/kgdb.tmpl
+ create mode 100644 include/asm-generic/kgdb.h
+ create mode 100644 include/linux/kgdb.h
+ create mode 100644 kernel/kgdb.c
+ create mode 100644 lib/Kconfig.kgdb
+
+Index: linux-2.6.21.1/Documentation/DocBook/Makefile
+===================================================================
+--- linux-2.6.21.1.orig/Documentation/DocBook/Makefile
++++ linux-2.6.21.1/Documentation/DocBook/Makefile
+@@ -11,7 +11,7 @@ DOCBOOKS := wanbook.xml z8530book.xml mc
+ 	    procfs-guide.xml writing_usb_driver.xml \
+ 	    kernel-api.xml filesystems.xml lsm.xml usb.xml \
+ 	    gadget.xml libata.xml mtdnand.xml librs.xml rapidio.xml \
+-	    genericirq.xml
++	    genericirq.xml kgdb.xml
+ 
+ ###
+ # The build process is as follows (targets):
+Index: linux-2.6.21.1/Documentation/DocBook/kgdb.tmpl
+===================================================================
+--- /dev/null
++++ linux-2.6.21.1/Documentation/DocBook/kgdb.tmpl
+@@ -0,0 +1,234 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook XML V4.1.2//EN"
++	"http://www.oasis-open.org/docbook/xml/4.1.2/docbookx.dtd" []>
++
++<book id="kgdbInternals">
++ <bookinfo>
++  <title>KGDB Internals</title>
++
++  <authorgroup>
++   <author>
++    <firstname>Tom</firstname>
++    <surname>Rini</surname>
++    <affiliation>
++     <address>
++      <email>trini@kernel.crashing.org</email>
++     </address>
++    </affiliation>
++   </author>
++  </authorgroup>
++
++  <authorgroup>
++   <author>
++    <firstname>Amit S.</firstname>
++    <surname>Kale</surname>
++    <affiliation>
++     <address>
++      <email>amitkale@linsyssoft.com</email>
++     </address>
++    </affiliation>
++   </author>
++  </authorgroup>
++
++  <copyright>
++   <year>2004-2005</year>
++   <holder>MontaVista Software, Inc.</holder>
++  </copyright>
++  <copyright>
++   <year>2004</year>
++   <holder>Amit S. Kale</holder>
++  </copyright>
++
++  <legalnotice>
++   <para>
++   This file is licensed under the terms of the GNU General Public License
++   version 2. This program is licensed "as is" without any warranty of any
++   kind, whether express or implied.
++   </para>
++
++  </legalnotice>
++ </bookinfo>
++
++<toc></toc>
++  <chapter id="Introduction">
++    <title>Introduction</title>
++    <para>
++    kgdb is a source level debugger for linux kernel. It is used along
++    with gdb to debug a linux kernel. Kernel developers can debug a kernel
++    similar to application programs with the use of kgdb. It makes it
++    possible to place breakpoints in kernel code, step through the code
++    and observe variables.
++    </para>
++    <para>
++    Two machines are required for using kgdb. One of these machines is a
++    development machine and the other is a test machine. The machines are
++    typically connected through a serial line, a null-modem cable which
++    connects their serial ports.  It is also possible however, to use an
++    ethernet connection between the machines.  The kernel to be debugged
++    runs on the test machine. gdb runs on the development machine. The
++    serial line or ethernet connection is used by gdb to communicate to
++    the kernel being debugged.
++    </para>
++  </chapter>
++  <chapter id="CompilingAKernel">
++    <title>Compiling a kernel</title>
++    <para>
++    To enable <symbol>CONFIG_KGDB</symbol>, look under the "Kernel debugging"
++    and then select "KGDB: kernel debugging with remote gdb".
++    </para>
++    <para>
++    The first choice for I/O is <symbol>CONFIG_KGDB_ONLY_MODULES</symbol>.
++    This means that you will only be able to use KGDB after loading a
++    kernel module that defines how you want to be able to talk with
++    KGDB.  There are two other choices (more on some architectures) that
++    can be enabled as modules later, if not picked here.
++    </para>
++    <para>The first of these is <symbol>CONFIG_KGDB_8250_NOMODULE</symbol>.
++    This has sub-options such as <symbol>CONFIG_KGDB_SIMPLE_SERIAL</symbol>
++    which toggles choosing the serial port by ttyS number or by specifying
++    a port and IRQ number.
++    </para>
++    <para>
++    The second of these choices on most systems for I/O is
++    <symbol>CONFIG_KGDBOE</symbol>. This requires that the machine to be
++    debugged has an ethernet card which supports the netpoll API, such as
++    the cards supported by <symbol>CONFIG_E100</symbol>.  There are no
++    sub-options for this, but a kernel command line option is required.
++    </para>
++  </chapter>
++  <chapter id="BootingTheKernel">
++    <title>Booting the kernel</title>
++    <para>
++    The Kernel command line option <constant>kgdbwait</constant> makes kgdb
++    wait for gdb connection during booting of a kernel.  If the
++    <symbol>CONFIG_KGDB_8250</symbol> driver is used (or if applicable,
++    another serial driver) this breakpoint will happen very early on, before
++    console output.  If you wish to change serial port information and you
++    have enabled both <symbol>CONFIG_KGDB_8250</symbol> and
++    <symbol>CONFIG_KGDB_SIMPLE_SERIAL</symbol> then you must pass the option
++    <constant>kgdb8250=&lt;io or mmio&gt;,&lt;address&gt;,&lt;baud
++    rate&gt;,&lt;irq&gt;</constant> before <constant>kgdbwait</constant>.
++    The values <constant>io</constant> or <constant>mmio</constant> refer to
++    if the address being passed next needs to be memory mapped
++    (<constant>mmio</constant>) or not. The <constant>address</constant> must
++    be passed in hex and is the hardware address and will be remapped if
++    passed as <constant>mmio</constant>. The value
++    <constant>baud rate</constant> and <constant>irq</constant> are base-10.
++    The supported values for <constant>baud rate</constant> are
++    <constant>9600</constant>, <constant>19200</constant>,
++    <constant>38400</constant>, <constant>57600</constant>, and
++    <constant>115200</constant>.
++    </para>
++    <para>
++    To have KGDB stop the kernel and wait, with the compiled values for the
++    serial driver, pass in: <constant>kgdbwait</constant>.
++    </para>
++    <para>
++    To specify the values of the serial port at boot:
++    <constant>kgdb8250=io,3f8,115200,3</constant>.
++    On IA64 this could also be:
++    <constant>kgdb8250=mmio,0xff5e0000,115200,74</constant>
++    And to have KGDB also stop the kernel and wait for GDB to connect, pass in
++    <constant>kgdbwait</constant> after this arguement.
++    </para>
++    <para>
++    To configure the <symbol>CONFIG_KGDBOE</symbol> driver, pass in
++    <constant>kgdboe=[src-port]@&lt;src-ip&gt;/[dev],[tgt-port]@&lt;tgt-ip&gt;/[tgt-macaddr]</constant>
++    where:
++    <itemizedlist>
++      <listitem><para>src-port (optional): source for UDP packets (defaults to <constant>6443</constant>)</para></listitem>
++      <listitem><para>src-ip: source IP to use (interface address)</para></listitem>
++      <listitem><para>dev (optional): network interface (<constant>eth0</constant>)</para></listitem>
++      <listitem><para>tgt-port (optional): port GDB will use (defaults to <constant>6442</constant>)</para></listitem>
++      <listitem><para>tgt-ip: IP address GDB will be connecting from</para></listitem>
++      <listitem><para>tgt-macaddr (optional): ethernet MAC address for logging agent (default is broadcast)</para></listitem>
++    </itemizedlist>
++    </para>
++    <para>
++    The <symbol>CONFIG_KGDBOE</symbol> driver can be reconfigured at run
++    time, if <symbol>CONFIG_SYSFS</symbol> and
++    <symbol>CONFIG_MODULES</symbol> by echo'ing a new config string to
++    <constant>/sys/module/kgdboe/parameter/kgdboe</constant>.  The
++    driver can be unconfigured with the special string
++    <constant>not_configured</constant>.
++    </para>
++  </chapter>
++  <chapter id="ConnectingGDB">
++  <title>Connecting gdb</title>
++    <para>
++    If you have used any of the methods to have KGDB stop and create
++    an initial breakpoint described in the previous chapter, kgdb prints
++    the message "Waiting for connection from remote gdb..." on the console
++    and waits for connection from gdb. At this point you connect gdb to kgdb.
++    </para>
++    <para>
++    Example (serial):
++    </para>
++    <programlisting>
++    % gdb ./vmlinux
++    (gdb) set remotebaud 115200
++    (gdb) target remote /dev/ttyS0
++    </programlisting>
++    <para>
++    Example (ethernet):
++    </para>
++    <programlisting>
++    % gdb ./vmlinux
++    (gdb) target remote udp:192.168.2.2:6443
++    </programlisting>
++    <para>
++    Once connected, you can debug a kernel the way you would debug an
++    application program.
++    </para>
++  </chapter>
++  <chapter id="CommonBackEndReq">
++    <title>The common backend (required)</title>
++      <para>
++      There are a few flags which must be set on every architecture in
++      their &lt;asm/kgdb.h&gt; file.  These are:
++      <itemizedlist>
++        <listitem>
++	  <para>
++	  NUMREGBYTES: The size in bytes of all of the registers, so
++	  that we can ensure they will all fit into a packet.
++	  </para>
++	  <para>
++	  BUFMAX: The size in bytes of the buffer GDB will read into.
++	  This must be larger than NUMREGBYTES.
++	  </para>
++	  <para>
++	  CACHE_FLUSH_IS_SAFE: Set to one if it always safe to call
++	  flush_cache_range or flush_icache_range.  On some architectures,
++	  these functions may not be safe to call on SMP since we keep other
++	  CPUs in a holding pattern.
++	  </para>
++	</listitem>
++      </itemizedlist>
++      </para>
++      <para>
++      There are also the following functions for the common backend,
++      found in kernel/kgdb.c that must be supplied by the
++      architecture-specific backend.  No weak version of these is provided.
++      </para>
++!Iinclude/linux/kgdb.h
++  </chapter>
++  <chapter id="CommonBackEndOpt">
++    <title>The common backend (optional)</title>
++      <para>
++      These functions are part of the common backend, found in kernel/kgdb.c
++      and are optionally implemented.  Some functions (with _hw_ in the name)
++      end up being required on arches which use hardware breakpoints.
++      </para>
++!Ikernel/kgdb.c
++  </chapter>
++  <chapter id="DriverSpecificFunctions">
++    <title>Driver-Specific Functions</title>
++      <para>
++      Some of the I/O drivers have additional functions that can be
++      called, that are specific to the driver.  Calls from other places
++      to these functions must be wrapped in #ifdefs for the driver in
++      question.
++      </para>
++!Idrivers/serial/8250_kgdb.c
++   </chapter>
++</book>
+Index: linux-2.6.21.1/MAINTAINERS
+===================================================================
+--- linux-2.6.21.1.orig/MAINTAINERS
++++ linux-2.6.21.1/MAINTAINERS
+@@ -1995,6 +1995,15 @@ L:	linux-kernel@vger.kernel.org
+ L:	fastboot@lists.linux-foundation.org
+ S:	Maintained
+ 
++KGDB
++P:	Jason Wessel
++M:	jason.wessel@windriver.com
++P:	Amit S. Kale
++M:	amitkale@linsyssoft.com
++W:	http://sourceforge.net/projects/kgdb
++L:	kgdb-bugreport@lists.sourceforge.net
++S:	Maintained
++
+ KPROBES
+ P:	Prasanna S Panchamukhi
+ M:	prasanna@in.ibm.com
+Index: linux-2.6.21.1/include/asm-generic/kgdb.h
+===================================================================
+--- /dev/null
++++ linux-2.6.21.1/include/asm-generic/kgdb.h
+@@ -0,0 +1,100 @@
++/*
++ * include/asm-generic/kgdb.h
++ *
++ * This provides the assembly level information so that KGDB can provide
++ * a GDB that has been patched with enough information to know to stop
++ * trying to unwind the function.
++ *
++ * Author: Tom Rini <trini@kernel.crashing.org>
++ *
++ * 2005 (c) MontaVista Software, Inc.
++ * 2006 (c) Embedded Alley Solutions, Inc.
++ *
++ * This file is licensed under the terms of the GNU General Public License
++ * version 2. This program is licensed "as is" without any warranty of any
++ * kind, whether express or implied.
++ */
++
++#ifndef __ASM_GENERIC_KGDB_H__
++#define __ASM_GENERIC_KGDB_H__
++
++#ifdef CONFIG_X86
++/**
++ *	kgdb_skipexception - Bail of of KGDB when we've been triggered.
++ *	@exception: Exception vector number
++ *	@regs: Current &struct pt_regs.
++ *
++ *	On some architectures we need to skip a breakpoint exception when
++ *	it occurs after a breakpoint has been removed.
++ */
++int kgdb_skipexception(int exception, struct pt_regs *regs);
++#else
++#define kgdb_skipexception(exception, regs)	0
++#endif
++
++#if defined(CONFIG_X86)
++/**
++ *	kgdb_post_master_code - Save error vector/code numbers.
++ *	@regs: Original pt_regs.
++ *	@e_vector: Original error vector.
++ *	@err_code: Original error code.
++ *
++ *	This is needed on architectures which support SMP and KGDB.
++ *	This function is called after all the slave cpus have been put
++ *	to a know spin state and the master CPU has control over KGDB.
++ */
++extern void kgdb_post_master_code(struct pt_regs *regs, int e_vector,
++				  int err_code);
++
++/**
++ *	kgdb_disable_hw_debug - Disable hardware debugging while we in kgdb.
++ *	@regs: Current &struct pt_regs.
++ *
++ *	This function will be called if the particular architecture must
++ *	disable hardware debugging while it is processing gdb packets or
++ *	handling exception.
++ */
++extern void kgdb_disable_hw_debug(struct pt_regs *regs);
++#else
++#define kgdb_disable_hw_debug(regs)		do { } while (0)
++#define kgdb_post_master_code(regs, v, c)	do { } while (0)
++#endif
++
++#ifdef CONFIG_KGDB_ARCH_HAS_SHADOW_INFO
++/**
++ *	kgdb_shadowinfo - Get shadowed information on @threadid.
++ *	@regs: The &struct pt_regs of the current process.
++ *	@buffer: A buffer of %BUFMAX size.
++ *	@threadid: The thread id of the shadowed process to get information on.
++ */
++extern void kgdb_shadowinfo(struct pt_regs *regs, char *buffer,
++			    unsigned threadid);
++
++/**
++ *	kgdb_get_shadow_thread - Get the shadowed &task_struct of @threadid.
++ *	@regs: The &struct pt_regs of the current thread.
++ *	@threadid: The thread id of the shadowed process to get information on.
++ *
++ *	RETURN:
++ *	This returns a pointer to the &struct task_struct of the shadowed
++ *	thread, @threadid.
++ */
++extern struct task_struct *kgdb_get_shadow_thread(struct pt_regs *regs,
++						  int threadid);
++
++/**
++ *	kgdb_shadow_regs - Return the shadowed registers of @threadid.
++ *	@regs: The &struct pt_regs of the current thread.
++ *	@threadid: The thread id we want the &struct pt_regs for.
++ *
++ *	RETURN:
++ *	The a pointer to the &struct pt_regs of the shadowed thread @threadid.
++ */
++extern struct pt_regs *kgdb_shadow_regs(struct pt_regs *regs, int threadid);
++#else
++#define kgdb_shadowinfo(regs, buf, threadid)		do { } while (0)
++#define kgdb_get_shadow_thread(regs, threadid)		NULL
++#define kgdb_shadow_regs(regs, threadid)		NULL
++#endif
++
++#endif				/* __ASM_GENERIC_KGDB_H__ */
+Index: linux-2.6.21.1/include/linux/kgdb.h
+===================================================================
+--- /dev/null
++++ linux-2.6.21.1/include/linux/kgdb.h
+@@ -0,0 +1,290 @@
++/*
++ * include/linux/kgdb.h
++ *
++ * This provides the hooks and functions that KGDB needs to share between
++ * the core, I/O and arch-specific portions.
++ *
++ * Author: Amit Kale <amitkale@linsyssoft.com> and
++ *         Tom Rini <trini@kernel.crashing.org>
++ *
++ * 2001-2004 (c) Amit S. Kale and 2003-2005 (c) MontaVista Software, Inc.
++ * This file is licensed under the terms of the GNU General Public License
++ * version 2. This program is licensed "as is" without any warranty of any
++ * kind, whether express or implied.
++ */
++#ifdef __KERNEL__
++#ifndef _KGDB_H_
++#define _KGDB_H_
++
++#include <asm/atomic.h>
++
++#ifdef CONFIG_KGDB
++#include <asm/kgdb.h>
++#include <linux/serial_8250.h>
++#include <linux/linkage.h>
++#include <linux/init.h>
++
++#ifndef CHECK_EXCEPTION_STACK
++#define CHECK_EXCEPTION_STACK()	1
++#endif
++
++struct tasklet_struct;
++struct pt_regs;
++struct task_struct;
++struct uart_port;
++
++#ifdef CONFIG_KGDB_CONSOLE
++extern struct console kgdbcons;
++#endif
++
++/* To enter the debugger explicitly. */
++extern void breakpoint(void);
++extern int kgdb_connected;
++extern int kgdb_may_fault;
++extern struct tasklet_struct kgdb_tasklet_breakpoint;
++
++extern atomic_t kgdb_setting_breakpoint;
++extern atomic_t cpu_doing_single_step;
++
++extern struct task_struct *kgdb_usethread, *kgdb_contthread;
++
++enum kgdb_bptype {
++	bp_breakpoint = '0',
++	bp_hardware_breakpoint,
++	bp_write_watchpoint,
++	bp_read_watchpoint,
++	bp_access_watchpoint
++};
++
++enum kgdb_bpstate {
++	bp_none = 0,
++	bp_removed,
++	bp_set,
++	bp_active
++};
++
++struct kgdb_bkpt {
++	unsigned long bpt_addr;
++	unsigned char saved_instr[BREAK_INSTR_SIZE];
++	enum kgdb_bptype type;
++	enum kgdb_bpstate state;
++};
++
++/* The maximum number of KGDB I/O modules that can be loaded */
++#define MAX_KGDB_IO_HANDLERS 3
++
++#ifndef MAX_BREAKPOINTS
++#define MAX_BREAKPOINTS		1000
++#endif
++
++#define KGDB_HW_BREAKPOINT	1
++
++/* Required functions. */
++/**
++ *	kgdb_arch_init - Perform any architecture specific initalization.
++ *
++ *	This function will handle the initalization of any architecture
++ *	specific hooks.
++ */
++extern int kgdb_arch_init(void);
++
++/**
++ *	regs_to_gdb_regs - Convert ptrace regs to GDB regs
++ *	@gdb_regs: A pointer to hold the registers in the order GDB wants.
++ *	@regs: The &struct pt_regs of the current process.
++ *
++ *	Convert the pt_regs in @regs into the format for registers that
++ *	GDB expects, stored in @gdb_regs.
++ */
++extern void regs_to_gdb_regs(unsigned long *gdb_regs, struct pt_regs *regs);
++
++/**
++ *	sleeping_regs_to_gdb_regs - Convert ptrace regs to GDB regs
++ *	@gdb_regs: A pointer to hold the registers in the order GDB wants.
++ *	@p: The &struct task_struct of the desired process.
++ *
++ *	Convert the register values of the sleeping process in @p to
++ *	the format that GDB expects.
++ *	This function is called when kgdb does not have access to the
++ *	&struct pt_regs and therefore it should fill the gdb registers
++ *	@gdb_regs with what has	been saved in &struct thread_struct
++ *	thread field during switch_to.
++ */
++extern void sleeping_thread_to_gdb_regs(unsigned long *gdb_regs,
++					struct task_struct *p);
++
++/**
++ *	gdb_regs_to_regs - Convert GDB regs to ptrace regs.
++ *	@gdb_regs: A pointer to hold the registers we've recieved from GDB.
++ *	@regs: A pointer to a &struct pt_regs to hold these values in.
++ *
++ *	Convert the GDB regs in @gdb_regs into the pt_regs, and store them
++ *	in @regs.
++ */
++extern void gdb_regs_to_regs(unsigned long *gdb_regs, struct pt_regs *regs);
++
++/**
++ *	kgdb_arch_handle_exception - Handle architecture specific GDB packets.
++ *	@vector: The error vector of the exception that happened.
++ *	@signo: The signal number of the exception that happened.
++ *	@err_code: The error code of the exception that happened.
++ *	@remcom_in_buffer: The buffer of the packet we have read.
++ *	@remcom_out_buffer: The buffer, of %BUFMAX to write a packet into.
++ *	@regs: The &struct pt_regs of the current process.
++ *
++ *	This function MUST handle the 'c' and 's' command packets,
++ *	as well packets to set / remove a hardware breakpoint, if used.
++ *	If there are additional packets which the hardware needs to handle,
++ *	they are handled here.  The code should return -1 if it wants to
++ *	process more packets, and a %0 or %1 if it wants to exit from the
++ *	kgdb hook.
++ */
++extern int kgdb_arch_handle_exception(int vector, int signo, int err_code,
++				      char *remcom_in_buffer,
++				      char *remcom_out_buffer,
++				      struct pt_regs *regs);
++
++/**
++ * 	kgdb_roundup_cpus - Get other CPUs into a holding pattern
++ * 	@flags: Current IRQ state
++ *
++ * 	On SMP systems, we need to get the attention of the other CPUs
++ * 	and get them be in a known state.  This should do what is needed
++ * 	to get the other CPUs to call kgdb_wait(). Note that on some arches,
++ *	the NMI approach is not used for rounding up all the CPUs. For example,
++ *	in case of MIPS, smp_call_function() is used to roundup CPUs. In
++ *	this case, we have to make sure that interrupts are enabled before
++ *	calling smp_call_function(). The argument to this function is
++ *	the flags that will be used when restoring the interrupts. There is
++ *	local_irq_save() call before kgdb_roundup_cpus().
++ *
++ *	On non-SMP systems, this is not called.
++ */
++extern void kgdb_roundup_cpus(unsigned long flags);
++
++#ifndef JMP_REGS_ALIGNMENT
++#define JMP_REGS_ALIGNMENT
++#endif
++
++extern unsigned long kgdb_fault_jmp_regs[];
++
++/**
++ *	kgdb_fault_setjmp - Store state in case we fault.
++ *	@curr_context: An array to store state into.
++ *
++ *	Certain functions may try and access memory, and in doing so may
++ *	cause a fault.  When this happens, we trap it, restore state to
++ *	this call, and let ourself know that something bad has happened.
++ */
++extern asmlinkage int kgdb_fault_setjmp(unsigned long *curr_context);
++
++/**
++ *	kgdb_fault_longjmp - Restore state when we have faulted.
++ *	@curr_context: The previously stored state.
++ *
++ *	When something bad does happen, this function is called to
++ *	restore the known good state, and set the return value to 1, so
++ *	we know something bad happened.
++ */
++extern asmlinkage void kgdb_fault_longjmp(unsigned long *curr_context);
++
++/* Optional functions. */
++extern int kgdb_validate_break_address(unsigned long addr);
++extern int kgdb_arch_set_breakpoint(unsigned long addr, char *saved_instr);
++extern int kgdb_arch_remove_breakpoint(unsigned long addr, char *bundle);
++
++/**
++ * struct kgdb_arch - Desribe architecture specific values.
++ * @gdb_bpt_instr: The instruction to trigger a breakpoint.
++ * @flags: Flags for the breakpoint, currently just %KGDB_HW_BREAKPOINT.
++ * @shadowth: A value of %1 indicates we shadow information on processes.
++ * @set_breakpoint: Allow an architecture to specify how to set a software
++ * breakpoint.
++ * @remove_breakpoint: Allow an architecture to specify how to remove a
++ * software breakpoint.
++ * @set_hw_breakpoint: Allow an architecture to specify how to set a hardware
++ * breakpoint.
++ * @remove_hw_breakpoint: Allow an architecture to specify how to remove a
++ * hardware breakpoint.
++ *
++ * The @shadowth flag is an option to shadow information not retrievable by
++ * gdb otherwise.  This is deprecated in favor of a binutils which supports
++ * CFI macros.
++ */
++struct kgdb_arch {
++	unsigned char gdb_bpt_instr[BREAK_INSTR_SIZE];
++	unsigned long flags;
++	unsigned shadowth;
++	int (*set_breakpoint) (unsigned long, char *);
++	int (*remove_breakpoint)(unsigned long, char *);
++	int (*set_hw_breakpoint)(unsigned long, int, enum kgdb_bptype);
++	int (*remove_hw_breakpoint)(unsigned long, int, enum kgdb_bptype);
++	void (*remove_all_hw_break)(void);
++	void (*correct_hw_break)(void);
++};
++
++/* Thread reference */
++typedef unsigned char threadref[8];
++
++/**
++ * struct kgdb_io - Desribe the interface for an I/O driver to talk with KGDB.
++ * @read_char: Pointer to a function that will return one char.
++ * @write_char: Pointer to a function that will write one char.
++ * @flush: Pointer to a function that will flush any pending writes.
++ * @init: Pointer to a function that will initialize the device.
++ * @late_init: Pointer to a function that will do any setup that has
++ * other dependencies.
++ * @pre_exception: Pointer to a function that will do any prep work for
++ * the I/O driver.
++ * @post_exception: Pointer to a function that will do any cleanup work
++ * for the I/O driver.
++ *
++ * The @init and @late_init function pointers allow for an I/O driver
++ * such as a serial driver to fully initialize the port with @init and
++ * be called very early, yet safely call request_irq() later in the boot
++ * sequence.
++ *
++ * @init is allowed to return a non-0 return value to indicate failure.
++ * If this is called early on, then KGDB will try again when it would call
++ * @late_init.  If it has failed later in boot as well, the user will be
++ * notified.
++ */
++struct kgdb_io {
++	int (*read_char) (void);
++	void (*write_char) (u8);
++	void (*flush) (void);
++	int (*init) (void);
++	void (*late_init) (void);
++	void (*pre_exception) (void);
++	void (*post_exception) (void);
++};
++
++extern struct kgdb_io kgdb_io_ops;
++extern struct kgdb_arch arch_kgdb_ops;
++extern int kgdb_initialized;
++
++extern int kgdb_register_io_module(struct kgdb_io *local_kgdb_io_ops);
++extern void kgdb_unregister_io_module(struct kgdb_io *local_kgdb_io_ops);
++
++extern void __init kgdb8250_add_port(int i, struct uart_port *serial_req);
++extern void __init kgdb8250_add_platform_port(int i, struct plat_serial8250_port *serial_req);
++
++extern int kgdb_hex2long(char **ptr, long *long_val);
++extern char *kgdb_mem2hex(char *mem, char *buf, int count);
++extern char *kgdb_hex2mem(char *buf, char *mem, int count);
++extern int kgdb_get_mem(char *addr, unsigned char *buf, int count);
++extern int kgdb_set_mem(char *addr, unsigned char *buf, int count);
++
++int kgdb_isremovedbreak(unsigned long addr);
++
++extern int kgdb_handle_exception(int ex_vector, int signo, int err_code,
++				struct pt_regs *regs);
++extern void kgdb_nmihook(int cpu, void *regs);
++extern int debugger_step;
++extern atomic_t debugger_active;
++#else
++/* Stubs for when KGDB is not set. */
++static const atomic_t debugger_active = ATOMIC_INIT(0);
++#endif				/* CONFIG_KGDB */
++#endif				/* _KGDB_H_ */
++#endif				/* __KERNEL__ */
+Index: linux-2.6.21.1/kernel/Makefile
+===================================================================
+--- linux-2.6.21.1.orig/kernel/Makefile
++++ linux-2.6.21.1/kernel/Makefile
+@@ -41,6 +41,7 @@ obj-$(CONFIG_STOP_MACHINE) += stop_machi
+ obj-$(CONFIG_AUDIT) += audit.o auditfilter.o
+ obj-$(CONFIG_AUDITSYSCALL) += auditsc.o
+ obj-$(CONFIG_KPROBES) += kprobes.o
++obj-$(CONFIG_KGDB) += kgdb.o
+ obj-$(CONFIG_SYSFS) += ksysfs.o
+ obj-$(CONFIG_DETECT_SOFTLOCKUP) += softlockup.o
+ obj-$(CONFIG_GENERIC_HARDIRQS) += irq/
+Index: linux-2.6.21.1/kernel/kgdb.c
+===================================================================
+--- /dev/null
++++ linux-2.6.21.1/kernel/kgdb.c
+@@ -0,0 +1,1861 @@
++/*
++ * kernel/kgdb.c
++ *
++ * Maintainer: Jason Wessel <jason.wessel@windriver.com>
++ *
++ * Copyright (C) 2000-2001 VERITAS Software Corporation.
++ * Copyright (C) 2002-2004 Timesys Corporation
++ * Copyright (C) 2003-2004 Amit S. Kale <amitkale@linsyssoft.com>
++ * Copyright (C) 2004 Pavel Machek <pavel@suse.cz>
++ * Copyright (C) 2004-2006 Tom Rini <trini@kernel.crashing.org>
++ * Copyright (C) 2004-2006 LinSysSoft Technologies Pvt. Ltd.
++ * Copyright (C) 2005-2007 Wind River Systems, Inc.
++ *
++ * Contributors at various stages not listed above:
++ *  Jason Wessel ( jason.wessel@windriver.com )
++ *  George Anzinger <george@mvista.com>
++ *  Anurekh Saxena (anurekh.saxena@timesys.com)
++ *  Lake Stevens Instrument Division (Glenn Engel)
++ *  Jim Kingdon, Cygnus Support.
++ *
++ * Original KGDB stub: David Grothe <dave@gcom.com>,
++ * Tigran Aivazian <tigran@sco.com>
++ *
++ * This file is licensed under the terms of the GNU General Public License
++ * version 2. This program is licensed "as is" without any warranty of any
++ * kind, whether express or implied.
++ */
++
++#include <linux/string.h>
++#include <linux/kernel.h>
++#include <linux/interrupt.h>
++#include <linux/sched.h>
++#include <linux/smp.h>
++#include <linux/spinlock.h>
++#include <linux/delay.h>
++#include <linux/mm.h>
++#include <linux/threads.h>
++#include <linux/reboot.h>
++#include <asm/system.h>
++#include <asm/ptrace.h>
++#include <asm/uaccess.h>
++#include <linux/kgdb.h>
++#include <asm/atomic.h>
++#include <linux/notifier.h>
++#include <linux/module.h>
++#include <asm/cacheflush.h>
++#include <linux/init.h>
++#include <linux/sysrq.h>
++#include <linux/console.h>
++#include <linux/sched.h>
++#include <linux/pid_namespace.h>
++#include <asm/byteorder.h>
++
++extern int pid_max;
++/* How many times to count all of the waiting CPUs */
++#define ROUNDUP_WAIT		640000	/* Arbitrary, increase if needed. */
++#define BUF_THREAD_ID_SIZE	16
++
++/*
++ * kgdb_initialized with a value of 1 indicates that kgdb is setup and is
++ * all ready to serve breakpoints and other kernel exceptions.  A value of
++ * -1 indicates that we have tried to initialize early, and need to try
++ * again later.
++ */
++int kgdb_initialized;
++/* Is a host GDB connected to us? */
++int kgdb_connected;
++/* Could we be about to try and access a bad memory location? If so we
++ * also need to flag this has happend. */
++int kgdb_may_fault;
++#ifdef CONFIG_PREEMPT
++static int kgdb_fault_preempt_count;
++#endif
++
++/* All the KGDB handlers are installed */
++int kgdb_from_module_registered = 0;
++/* Guard for recursive entry */
++static int exception_level = 0;
++
++/* We provide a kgdb_io_ops structure that may be overriden. */
++struct kgdb_io __attribute__ ((weak)) kgdb_io_ops;
++
++static struct kgdb_io kgdb_io_ops_prev[MAX_KGDB_IO_HANDLERS];
++static int kgdb_io_handler_cnt = 0;
++
++/* Export the following symbols for use with kernel modules */
++EXPORT_SYMBOL(kgdb_io_ops);
++EXPORT_SYMBOL(kgdb_tasklet_breakpoint);
++EXPORT_SYMBOL(kgdb_connected);
++EXPORT_SYMBOL(kgdb_register_io_module);
++EXPORT_SYMBOL(kgdb_unregister_io_module);
++EXPORT_SYMBOL(debugger_active);
++
++/*
++ * Holds information about breakpoints in a kernel. These breakpoints are
++ * added and removed by gdb.
++ */
++struct kgdb_bkpt kgdb_break[MAX_BREAKPOINTS];
++
++struct kgdb_arch *kgdb_ops = &arch_kgdb_ops;
++
++static const char hexchars[] = "0123456789abcdef";
++
++static spinlock_t slavecpulocks[NR_CPUS];
++static atomic_t procindebug[NR_CPUS];
++atomic_t kgdb_setting_breakpoint;
++EXPORT_SYMBOL(kgdb_setting_breakpoint);
++struct task_struct *kgdb_usethread, *kgdb_contthread;
++
++int debugger_step;
++atomic_t debugger_active;
++
++/* Our I/O buffers. */
++static char remcom_in_buffer[BUFMAX];
++static char remcom_out_buffer[BUFMAX];
++/* Storage for the registers, in GDB format. */
++static unsigned long gdb_regs[(NUMREGBYTES + sizeof(unsigned long) - 1) /
++			      sizeof(unsigned long)];
++/* Storage of registers for handling a fault. */
++unsigned long kgdb_fault_jmp_regs[NUMCRITREGBYTES / sizeof(unsigned long)]
++ JMP_REGS_ALIGNMENT;
++static int kgdb_notify_reboot(struct notifier_block *this,
++				unsigned long code ,void *x);
++struct debuggerinfo_struct {
++	void *debuggerinfo;
++	struct task_struct *task;
++} kgdb_info[NR_CPUS];
++
++/* to keep track of the CPU which is doing the single stepping*/
++atomic_t cpu_doing_single_step = ATOMIC_INIT(-1);
++
++/* reboot notifier block */
++static struct notifier_block kgdb_reboot_notifier = {
++	.notifier_call  = kgdb_notify_reboot,
++	.next           = NULL,
++	.priority       = INT_MAX,
++};
++
++int __attribute__ ((weak))
++     kgdb_validate_break_address(unsigned long addr)
++{
++	int error = 0;
++	char tmp_variable[BREAK_INSTR_SIZE];
++	error = kgdb_get_mem((char *)addr, tmp_variable, BREAK_INSTR_SIZE);
++	return error;
++}
++
++int __attribute__ ((weak))
++     kgdb_arch_set_breakpoint(unsigned long addr, char *saved_instr)
++{
++	int error = 0;
++	if ((error = kgdb_get_mem((char *)addr,
++		saved_instr, BREAK_INSTR_SIZE)) < 0)
++			return error;
++
++	if ((error = kgdb_set_mem((char *)addr, kgdb_ops->gdb_bpt_instr,
++		BREAK_INSTR_SIZE)) < 0)
++			return error;
++	return 0;
++}
++
++int __attribute__ ((weak))
++     kgdb_arch_remove_breakpoint(unsigned long addr, char *bundle)
++{
++
++	int error = 0;
++	if ((error =kgdb_set_mem((char *)addr, (char *)bundle,
++		BREAK_INSTR_SIZE)) < 0)
++			return error;
++	return 0;
++}
++
++unsigned long __attribute__ ((weak))
++    kgdb_arch_pc(int exception, struct pt_regs *regs)
++{
++	return instruction_pointer(regs);
++}
++
++static int hex(char ch)
++{
++	if ((ch >= 'a') && (ch <= 'f'))
++		return (ch - 'a' + 10);
++	if ((ch >= '0') && (ch <= '9'))
++		return (ch - '0');
++	if ((ch >= 'A') && (ch <= 'F'))
++		return (ch - 'A' + 10);
++	return (-1);
++}
++
++/* scan for the sequence $<data>#<checksum>	*/
++static void get_packet(char *buffer)
++{
++	unsigned char checksum;
++	unsigned char xmitcsum;
++	int count;
++	char ch;
++	if (!kgdb_io_ops.read_char)
++		return;
++	do {
++		/* Spin and wait around for the start character, ignore all
++		 * other characters */
++		while ((ch = (kgdb_io_ops.read_char())) != '$') ;
++		kgdb_connected = 1;
++		checksum = 0;
++		xmitcsum = -1;
++
++		count = 0;
++
++		/* now, read until a # or end of buffer is found */
++		while (count < (BUFMAX - 1)) {
++			ch = kgdb_io_ops.read_char();
++			if (ch == '#')
++				break;
++			checksum = checksum + ch;
++			buffer[count] = ch;
++			count = count + 1;
++		}
++		buffer[count] = 0;
++
++		if (ch == '#') {
++			xmitcsum = hex(kgdb_io_ops.read_char()) << 4;
++			xmitcsum += hex(kgdb_io_ops.read_char());
++
++			if (checksum != xmitcsum)
++				/* failed checksum */
++				kgdb_io_ops.write_char('-');
++			else
++				/* successful transfer */
++				kgdb_io_ops.write_char('+');
++			if (kgdb_io_ops.flush)
++				kgdb_io_ops.flush();
++		}
++	} while (checksum != xmitcsum);
++}
++
++static void kgdb_set_may_fault(void) {
++	kgdb_may_fault = 1;
++#ifdef CONFIG_PREEMPT
++	kgdb_fault_preempt_count = preempt_count();
++#endif
++}
++
++static void kgdb_unset_may_fault(void) {
++	kgdb_may_fault = 0;
++#ifdef CONFIG_PREEMPT
++	preempt_count() = kgdb_fault_preempt_count;
++#endif
++}
++
++/*
++ * Send the packet in buffer.
++ * Check for gdb connection if asked for.
++ */
++static void put_packet(char *buffer)
++{
++	unsigned char checksum;
++	int count;
++	char ch;
++
++	if (!kgdb_io_ops.write_char)
++		return;
++	/* $<packet info>#<checksum>. */
++	while (1) {
++		kgdb_io_ops.write_char('$');
++		checksum = 0;
++		count = 0;
++
++		while ((ch = buffer[count])) {
++			kgdb_io_ops.write_char(ch);
++			checksum += ch;
++			count++;
++		}
++
++		kgdb_io_ops.write_char('#');
++		kgdb_io_ops.write_char(hexchars[checksum >> 4]);
++		kgdb_io_ops.write_char(hexchars[checksum % 16]);
++		if (kgdb_io_ops.flush)
++			kgdb_io_ops.flush();
++
++		/* Now see what we get in reply. */
++		ch = kgdb_io_ops.read_char();
++
++		if (ch == 3)
++			ch = kgdb_io_ops.read_char();
++
++		/* If we get an ACK, we are done. */
++		if (ch == '+')
++			return;
++
++		/* If we get the start of another packet, this means
++		 * that GDB is attempting to reconnect.  We will NAK
++		 * the packet being sent, and stop trying to send this
++		 * packet. */
++		if (ch == '$') {
++			kgdb_io_ops.write_char('-');
++			if (kgdb_io_ops.flush)
++				kgdb_io_ops.flush();
++			return;
++		}
++	}
++}
++
++/*
++ * convert the memory pointed to by mem into hex, placing result in buf
++ * return a pointer to the last char put in buf (null). May return an error.
++ */
++char *kgdb_mem2hex(char *mem, char *buf, int count)
++{
++	kgdb_set_may_fault();
++	if ((kgdb_fault_setjmp(kgdb_fault_jmp_regs)) != 0) {
++		kgdb_unset_may_fault();
++		return ERR_PTR(-EINVAL);
++	}
++	/* Accessing some registers in a single load instruction is
++	 * required to avoid bad side effects for some I/O registers.
++	 */
++	if ((count == 2) && (((long)mem & 1) == 0)) {
++		unsigned short tmp_s = *(unsigned short *)mem;
++		mem += 2;
++#ifdef __BIG_ENDIAN
++		*buf++ = hexchars[(tmp_s >> 12) & 0xf];
++		*buf++ = hexchars[(tmp_s >> 8) & 0xf];
++		*buf++ = hexchars[(tmp_s >> 4) & 0xf];
++		*buf++ = hexchars[tmp_s & 0xf];
++#else
++		*buf++ = hexchars[(tmp_s >> 4) & 0xf];
++		*buf++ = hexchars[tmp_s & 0xf];
++		*buf++ = hexchars[(tmp_s >> 12) & 0xf];
++		*buf++ = hexchars[(tmp_s >> 8) & 0xf];
++#endif
++	} else if ((count == 4) && (((long)mem & 3) == 0)) {
++		unsigned long tmp_l = *(unsigned int *)mem;
++		mem += 4;
++#ifdef __BIG_ENDIAN
++		*buf++ = hexchars[(tmp_l >> 28) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 24) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 20) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 16) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 12) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 8) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 4) & 0xf];
++		*buf++ = hexchars[tmp_l & 0xf];
++#else
++		*buf++ = hexchars[(tmp_l >> 4) & 0xf];
++		*buf++ = hexchars[tmp_l & 0xf];
++		*buf++ = hexchars[(tmp_l >> 12) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 8) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 20) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 16) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 28) & 0xf];
++		*buf++ = hexchars[(tmp_l >> 24) & 0xf];
++#endif
++#ifdef CONFIG_64BIT
++	} else if ((count == 8) && (((long)mem & 7) == 0)) {
++		unsigned long long tmp_ll = *(unsigned long long *)mem;
++		mem += 8;
++#ifdef __BIG_ENDIAN
++		*buf++ = hexchars[(tmp_ll >> 60) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 56) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 52) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 48) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 44) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 40) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 36) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 32) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 28) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 24) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 20) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 16) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 12) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 8) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 4) & 0xf];
++		*buf++ = hexchars[tmp_ll & 0xf];
++#else
++		*buf++ = hexchars[(tmp_ll >> 4) & 0xf];
++		*buf++ = hexchars[tmp_ll & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 12) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 8) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 20) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 16) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 28) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 24) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 36) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 32) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 44) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 40) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 52) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 48) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 60) & 0xf];
++		*buf++ = hexchars[(tmp_ll >> 56) & 0xf];
++#endif
++#endif
++	} else {
++		while (count-- > 0) {
++			unsigned char ch = *mem++;
++			*buf++ = hexchars[ch >> 4];
++			*buf++ = hexchars[ch & 0xf];
++		}
++	}
++	kgdb_unset_may_fault();
++	*buf = 0;
++	return (buf);
++}
++
++/*
++ * Copy the binary array pointed to by buf into mem.  Fix $, #, and
++ * 0x7d escaped with 0x7d.  Return a pointer to the character after
++ * the last byte written.
++ */
++static char *kgdb_ebin2mem(char *buf, char *mem, int count)
++{
++	kgdb_set_may_fault();
++	if ((kgdb_fault_setjmp(kgdb_fault_jmp_regs)) != 0) {
++		kgdb_unset_may_fault();
++		return ERR_PTR(-EINVAL);
++	}
++	for (; count > 0; count--, buf++) {
++		if (*buf == 0x7d)
++			*mem++ = *(++buf) ^ 0x20;
++		else
++			*mem++ = *buf;
++	}
++	kgdb_unset_may_fault();
++	return mem;
++}
++
++/*
++ * convert the hex array pointed to by buf into binary to be placed in mem
++ * return a pointer to the character AFTER the last byte written
++ * May return an error.
++ */
++char *kgdb_hex2mem(char *buf, char *mem, int count)
++{
++	kgdb_set_may_fault();
++	if ((kgdb_fault_setjmp(kgdb_fault_jmp_regs)) != 0) {
++		kgdb_unset_may_fault();
++		return ERR_PTR(-EINVAL);
++	}
++	if ((count == 2) && (((long)mem & 1) == 0)) {
++		unsigned short tmp_s = 0;
++#ifdef __BIG_ENDIAN
++		tmp_s |= hex(*buf++) << 12;
++		tmp_s |= hex(*buf++) << 8;
++		tmp_s |= hex(*buf++) << 4;
++		tmp_s |= hex(*buf++);
++#else
++		tmp_s |= hex(*buf++) << 4;
++		tmp_s |= hex(*buf++);
++		tmp_s |= hex(*buf++) << 12;
++		tmp_s |= hex(*buf++) << 8;
++#endif
++		*(unsigned short *)mem = tmp_s;
++		mem += 2;
++	} else if ((count == 4) && (((long)mem & 3) == 0)) {
++		unsigned long tmp_l = 0;
++#ifdef __BIG_ENDIAN
++		tmp_l |= hex(*buf++) << 28;
++		tmp_l |= hex(*buf++) << 24;
++		tmp_l |= hex(*buf++) << 20;
++		tmp_l |= hex(*buf++) << 16;
++		tmp_l |= hex(*buf++) << 12;
++		tmp_l |= hex(*buf++) << 8;
++		tmp_l |= hex(*buf++) << 4;
++		tmp_l |= hex(*buf++);
++#else
++		tmp_l |= hex(*buf++) << 4;
++		tmp_l |= hex(*buf++);
++		tmp_l |= hex(*buf++) << 12;
++		tmp_l |= hex(*buf++) << 8;
++		tmp_l |= hex(*buf++) << 20;
++		tmp_l |= hex(*buf++) << 16;
++		tmp_l |= hex(*buf++) << 28;
++		tmp_l |= hex(*buf++) << 24;
++#endif
++		*(unsigned long *)mem = tmp_l;
++		mem += 4;
++	} else {
++		int i;
++		for (i = 0; i < count; i++) {
++			unsigned char ch = hex(*buf++) << 4;
++			ch |= hex(*buf++);
++			*mem++ = ch;
++		}
++	}
++	kgdb_unset_may_fault();
++	return (mem);
++}
++
++/*
++ * While we find nice hex chars, build a long_val.
++ * Return number of chars processed.
++ */
++int kgdb_hex2long(char **ptr, long *long_val)
++{
++	int hex_val, num = 0;
++
++	*long_val = 0;
++
++	while (**ptr) {
++		hex_val = hex(**ptr);
++		if (hex_val >= 0) {
++			*long_val = (*long_val << 4) | hex_val;
++			num++;
++		} else
++			break;
++
++		(*ptr)++;
++	}
++
++	return (num);
++}
++
++/* Write memory due to an 'M' or 'X' packet. */
++static char *write_mem_msg(int binary)
++{
++	char *ptr = &remcom_in_buffer[1];
++	unsigned long addr, length;
++
++	if (kgdb_hex2long(&ptr, &addr) > 0 && *(ptr++) == ',' &&
++	    kgdb_hex2long(&ptr, &length) > 0 && *(ptr++) == ':') {
++		if (binary)
++			ptr = kgdb_ebin2mem(ptr, (char *)addr, length);
++		else
++			ptr = kgdb_hex2mem(ptr, (char *)addr, length);
++		if (CACHE_FLUSH_IS_SAFE)
++			flush_icache_range(addr, addr + length + 1);
++		if (IS_ERR(ptr))
++			return ptr;
++		return NULL;
++	}
++
++	return ERR_PTR(-EINVAL);
++}
++
++static inline char *pack_hex_byte(char *pkt, int byte)
++{
++	*pkt++ = hexchars[(byte >> 4) & 0xf];
++	*pkt++ = hexchars[(byte & 0xf)];
++	return pkt;
++}
++
++static inline void error_packet(char *pkt, int error)
++{
++	error = -error;
++	pkt[0] = 'E';
++	pkt[1] = hexchars[(error / 10)];
++	pkt[2] = hexchars[(error % 10)];
++	pkt[3] = '\0';
++}
++
++static char *pack_threadid(char *pkt, threadref * id)
++{
++	char *limit;
++	unsigned char *altid;
++
++	altid = (unsigned char *)id;
++	limit = pkt + BUF_THREAD_ID_SIZE;
++	while (pkt < limit)
++		pkt = pack_hex_byte(pkt, *altid++);
++
++	return pkt;
++}
++
++void int_to_threadref(threadref * id, int value)
++{
++	unsigned char *scan;
++	int i = 4;
++
++	scan = (unsigned char *)id;
++	while (i--)
++		*scan++ = 0;
++	*scan++ = (value >> 24) & 0xff;
++	*scan++ = (value >> 16) & 0xff;
++	*scan++ = (value >> 8) & 0xff;
++	*scan++ = (value & 0xff);
++}
++
++static struct task_struct *getthread(struct pt_regs *regs, int tid)
++{
++	if (init_pid_ns.last_pid == 0)
++		return current;
++
++	if (num_online_cpus() &&
++	    (tid >= pid_max + num_online_cpus() + kgdb_ops->shadowth))
++		return NULL;
++
++	if (kgdb_ops->shadowth && (tid >= pid_max + num_online_cpus()))
++		return kgdb_get_shadow_thread(regs, tid - pid_max -
++					      num_online_cpus());
++
++	if (tid >= pid_max)
++		return idle_task(tid - pid_max);
++
++	if (!tid)
++		return NULL;
++
++	return find_task_by_pid(tid);
++}
++
++#ifdef CONFIG_SMP
++static void kgdb_wait(struct pt_regs *regs)
++{
++	unsigned long flags;
++	int processor;
++
++	local_irq_save(flags);
++	processor = raw_smp_processor_id();
++	kgdb_info[processor].debuggerinfo = regs;
++	kgdb_info[processor].task = current;
++	atomic_set(&procindebug[processor], 1);
++
++	/* Wait till master processor goes completely into the debugger.
++	 * FIXME: this looks racy */
++	while (!atomic_read(&procindebug[atomic_read(&debugger_active) - 1])) {
++		int i = 10;	/* an arbitrary number */
++
++		while (--i)
++			cpu_relax();
++	}
++
++	/* Wait till master processor is done with debugging */
++	spin_lock(&slavecpulocks[processor]);
++
++	kgdb_info[processor].debuggerinfo = NULL;
++	kgdb_info[processor].task = NULL;
++
++	/* fix up hardware debug registers on local cpu */
++	if (kgdb_ops->correct_hw_break)
++		kgdb_ops->correct_hw_break();
++	/* Signal the master processor that we are done */
++	atomic_set(&procindebug[processor], 0);
++	spin_unlock(&slavecpulocks[processor]);
++	local_irq_restore(flags);
++}
++#endif
++
++int kgdb_get_mem(char *addr, unsigned char *buf, int count)
++{
++	kgdb_set_may_fault();
++	if ((kgdb_fault_setjmp(kgdb_fault_jmp_regs)) != 0) {
++		kgdb_unset_may_fault();
++		return -EINVAL;
++	}
++	while (count) {
++		if ((unsigned long)addr < TASK_SIZE) {
++			kgdb_unset_may_fault();
++			return -EINVAL;
++		}
++		*buf++ = *addr++;
++		count--;
++	}
++	kgdb_unset_may_fault();
++	return 0;
++}
++
++int kgdb_set_mem(char *addr, unsigned char *buf, int count)
++{
++	kgdb_set_may_fault();
++	if ((kgdb_fault_setjmp(kgdb_fault_jmp_regs)) != 0) {
++		kgdb_unset_may_fault();
++		return -EINVAL;
++	}
++	while (count) {
++		if ((unsigned long)addr < TASK_SIZE) {
++			kgdb_unset_may_fault();
++			return -EINVAL;
++		}
++		*addr++ = *buf++;
++		count--;
++	}
++	kgdb_unset_may_fault();
++	return 0;
++}
++int kgdb_activate_sw_breakpoints(void)
++{
++	int i;
++	int error = 0;
++	unsigned long addr;
++	for (i = 0; i < MAX_BREAKPOINTS; i++) {
++		if (kgdb_break[i].state != bp_set)
++			continue;
++		addr = kgdb_break[i].bpt_addr;
++		if ((error = kgdb_arch_set_breakpoint(addr,
++					kgdb_break[i].saved_instr)))
++			return error;
++
++		if (CACHE_FLUSH_IS_SAFE) {
++			if (current->mm && addr < TASK_SIZE)
++				flush_cache_range(current->mm->mmap_cache,
++						addr, addr + BREAK_INSTR_SIZE);
++			else
++				flush_icache_range(addr, addr +
++						BREAK_INSTR_SIZE);
++		}
++
++		kgdb_break[i].state = bp_active;
++        }
++	return 0;
++}
++
++static int kgdb_set_sw_break(unsigned long addr)
++{
++	int i, breakno = -1;
++	int error = 0;
++	if ((error = kgdb_validate_break_address(addr)) < 0)
++		return error;
++	for (i = 0; i < MAX_BREAKPOINTS; i++) {
++		if ((kgdb_break[i].state == bp_set) &&
++			(kgdb_break[i].bpt_addr == addr))
++			return -EEXIST;
++	}
++	for (i = 0; i < MAX_BREAKPOINTS; i++) {
++		if (kgdb_break[i].state == bp_removed &&
++				kgdb_break[i].bpt_addr == addr) {
++			breakno = i;
++			break;
++		}
++	}
++
++	if (breakno == -1) {
++		for (i = 0; i < MAX_BREAKPOINTS; i++) {
++			if (kgdb_break[i].state == bp_none) {
++				breakno = i;
++				break;
++			}
++		}
++	}
++	if (breakno == -1)
++		return -E2BIG;
++
++	kgdb_break[breakno].state = bp_set;
++	kgdb_break[breakno].type = bp_breakpoint;
++	kgdb_break[breakno].bpt_addr = addr;
++
++	return 0;
++}
++
++int kgdb_deactivate_sw_breakpoints(void)
++{
++	int i;
++	int error = 0;
++	unsigned long addr;
++	for (i = 0; i < MAX_BREAKPOINTS; i++) {
++		if (kgdb_break[i].state != bp_active)
++			continue;
++		addr = kgdb_break[i].bpt_addr;
++		if ((error = kgdb_arch_remove_breakpoint(addr,
++					kgdb_break[i].saved_instr)))
++			return error;
++
++		if (CACHE_FLUSH_IS_SAFE && current->mm &&
++				addr < TASK_SIZE)
++			flush_cache_range(current->mm->mmap_cache,
++					addr, addr + BREAK_INSTR_SIZE);
++		else if (CACHE_FLUSH_IS_SAFE)
++			flush_icache_range(addr,
++					addr + BREAK_INSTR_SIZE);
++		kgdb_break[i].state = bp_set;
++	}
++	return 0;
++}
++
++static int kgdb_remove_sw_break(unsigned long addr)
++{
++	int i;
++
++	for (i = 0; i < MAX_BREAKPOINTS; i++) {
++		if ((kgdb_break[i].state == bp_set) &&
++			(kgdb_break[i].bpt_addr == addr)) {
++			kgdb_break[i].state = bp_removed;
++			return 0;
++		}
++	}
++	return -ENOENT;
++}
++
++int kgdb_isremovedbreak(unsigned long addr)
++{
++	int i;
++	for (i = 0; i < MAX_BREAKPOINTS; i++) {
++		if ((kgdb_break[i].state == bp_removed) &&
++			(kgdb_break[i].bpt_addr == addr)) {
++			return 1;
++		}
++	}
++	return 0;
++}
++
++int remove_all_break(void)
++{
++	int i;
++	int error;
++	unsigned long addr;
++
++	/* Clear memory breakpoints. */
++	for (i = 0; i < MAX_BREAKPOINTS; i++) {
++		if (kgdb_break[i].state != bp_set)
++			continue;
++		addr = kgdb_break[i].bpt_addr;
++		if ((error = kgdb_arch_remove_breakpoint(addr,
++					kgdb_break[i].saved_instr)))
++			return error;
++		kgdb_break[i].state = bp_removed;
++	}
++
++	/* Clear hardware breakpoints. */
++	if (kgdb_ops->remove_all_hw_break)
++		kgdb_ops->remove_all_hw_break();
++
++	return 0;
++}
++
++static inline int shadow_pid(int realpid)
++{
++	if (realpid) {
++		return realpid;
++	}
++	return pid_max + raw_smp_processor_id();
++}
++
++static char gdbmsgbuf[BUFMAX + 1];
++static void kgdb_msg_write(const char *s, int len)
++{
++	int i;
++	int wcount;
++	char *bufptr;
++
++	/* 'O'utput */
++	gdbmsgbuf[0] = 'O';
++
++	/* Fill and send buffers... */
++	while (len > 0) {
++		bufptr = gdbmsgbuf + 1;
++
++		/* Calculate how many this time */
++		if ((len << 1) > (BUFMAX - 2))
++			wcount = (BUFMAX - 2) >> 1;
++		else
++			wcount = len;
++
++		/* Pack in hex chars */
++		for (i = 0; i < wcount; i++)
++			bufptr = pack_hex_byte(bufptr, s[i]);
++		*bufptr = '\0';
++
++		/* Move up */
++		s += wcount;
++		len -= wcount;
++
++		/* Write packet */
++		put_packet(gdbmsgbuf);
++	}
++}
++
++/*
++ * This function does all command procesing for interfacing to gdb.
++ *
++ * Locking hierarchy:
++ *	interface locks, if any (begin_session)
++ *	kgdb lock (debugger_active)
++ *
++ * Note that since we can be in here prior to our cpumask being filled
++ * out, we err on the side of caution and loop over NR_CPUS instead
++ * of a for_each_online_cpu.
++ *
++ */
++int kgdb_handle_exception(int ex_vector, int signo, int err_code,
++			  struct pt_regs *linux_regs)
++{
++	unsigned long length, addr;
++	char *ptr;
++	unsigned long flags;
++	unsigned i;
++	long threadid;
++	threadref thref;
++	struct task_struct *thread = NULL;
++	unsigned procid;
++	int numshadowth = num_online_cpus() + kgdb_ops->shadowth;
++	long kgdb_usethreadid = 0;
++	int error = 0, all_cpus_synced = 0;
++	struct pt_regs *shadowregs;
++	int processor = raw_smp_processor_id();
++	void *local_debuggerinfo;
++
++	/* Panic on recursive debugger calls. */
++	if (atomic_read(&debugger_active) == raw_smp_processor_id() + 1) {
++		exception_level++;
++		addr = kgdb_arch_pc(ex_vector, linux_regs);
++		kgdb_deactivate_sw_breakpoints();
++		if (kgdb_remove_sw_break(addr) == 0) {
++			/* If the break point removed ok at the place exception
++			 * occurred, try to recover and print a warning to the end
++			 * user because the user planted a breakpoint in a place
++			 * that KGDB needs in order to function.
++			 */
++			exception_level = 0;
++			kgdb_skipexception(ex_vector, linux_regs);
++			kgdb_activate_sw_breakpoints();
++			printk(KERN_CRIT "KGDB: re-enter exception: breakpoint removed\n");
++			WARN_ON(1);
++			return 0;
++		}
++		remove_all_break();
++		kgdb_skipexception(ex_vector, linux_regs);
++		if (exception_level > 1)
++			panic("Recursive entry to debugger");
++
++		printk(KERN_CRIT "KGDB: re-enter exception: ALL breakpoints removed\n");
++		panic("Recursive entry to debugger");
++		return 0;
++	}
++
++ acquirelock:
++
++	/*
++	 * Interrupts will be restored by the 'trap return' code, except when
++	 * single stepping.
++	 */
++	local_irq_save(flags);
++
++	/* Hold debugger_active */
++	procid = raw_smp_processor_id();
++
++	while (cmpxchg(&atomic_read(&debugger_active), 0, (procid + 1)) != 0) {
++		int i = 25;	/* an arbitrary number */
++
++		while (--i)
++			cpu_relax();
++
++		if (atomic_read(&cpu_doing_single_step) != -1 &&
++				atomic_read(&cpu_doing_single_step) != procid)
++			udelay(1);
++	}
++
++	/*
++	 * Don't enter if the last instance of the exception handler wanted to
++	 * come into the debugger again.
++	 */
++	if (atomic_read(&cpu_doing_single_step) != -1 &&
++	    atomic_read(&cpu_doing_single_step) != procid) {
++		atomic_set(&debugger_active, 0);
++		local_irq_restore(flags);
++		goto acquirelock;
++	}
++
++	/*
++	* Don't enter if we have hit a removed breakpoint.
++	*/
++	if (kgdb_skipexception(ex_vector, linux_regs))
++		goto kgdb_restore;
++
++	/*
++	 * Call the I/O drivers pre_exception routine
++	 * if the I/O driver defined one
++	 */
++	if (kgdb_io_ops.pre_exception)
++		kgdb_io_ops.pre_exception();
++
++	kgdb_info[processor].debuggerinfo = linux_regs;
++	kgdb_info[processor].task = current;
++
++	kgdb_disable_hw_debug(linux_regs);
++
++	if (!debugger_step || !kgdb_contthread)
++		for (i = 0; i < NR_CPUS; i++)
++			spin_lock(&slavecpulocks[i]);
++
++#ifdef CONFIG_SMP
++	/* Make sure we get the other CPUs */
++	if (!debugger_step || !kgdb_contthread)
++		kgdb_roundup_cpus(flags);
++#endif
++
++	/* spin_lock code is good enough as a barrier so we don't
++	 * need one here */
++	atomic_set(&procindebug[processor], 1);
++
++	/* Wait a reasonable time for the other CPUs to be notified and
++	 * be waiting for us.  Very early on this could be imperfect
++	 * as num_online_cpus() could be 0.*/
++	for (i = 0; i < ROUNDUP_WAIT; i++) {
++		int cpu, num = 0;
++		for (cpu = 0; cpu < NR_CPUS; cpu++) {
++			if (atomic_read(&procindebug[cpu]))
++				num++;
++		}
++		if (num >= num_online_cpus()) {
++			all_cpus_synced = 1;
++			break;
++		}
++	}
++
++	/* Clear the out buffer. */
++	memset(remcom_out_buffer, 0, sizeof(remcom_out_buffer));
++
++	/* Master processor is completely in the debugger */
++	kgdb_post_master_code(linux_regs, ex_vector, err_code);
++	kgdb_deactivate_sw_breakpoints();
++	debugger_step = 0;
++	kgdb_contthread = NULL;
++	exception_level = 0;
++
++	if (kgdb_connected) {
++		/* If we're still unable to roundup all of the CPUs,
++		 * send an 'O' packet informing the user again. */
++		if (!all_cpus_synced)
++			kgdb_msg_write("Not all CPUs have been synced for "
++				       "KGDB\n", 39);
++		/* Reply to host that an exception has occurred */
++		ptr = remcom_out_buffer;
++		*ptr++ = 'T';
++		*ptr++ = hexchars[(signo >> 4) % 16];
++		*ptr++ = hexchars[signo % 16];
++		ptr += strlen(strcpy(ptr, "thread:"));
++		int_to_threadref(&thref, shadow_pid(current->pid));
++		ptr = pack_threadid(ptr, &thref);
++		*ptr++ = ';';
++
++		put_packet(remcom_out_buffer);
++	}
++
++	kgdb_usethread = kgdb_info[processor].task;
++	kgdb_usethreadid = shadow_pid(kgdb_info[processor].task->pid);
++
++	while (kgdb_io_ops.read_char) {
++		char *bpt_type;
++		error = 0;
++
++		/* Clear the out buffer. */
++		memset(remcom_out_buffer, 0, sizeof(remcom_out_buffer));
++
++		get_packet(remcom_in_buffer);
++
++		switch (remcom_in_buffer[0]) {
++		case '?':
++			/* We know that this packet is only sent
++			 * during initial connect.  So to be safe,
++			 * we clear out our breakpoints now incase
++			 * GDB is reconnecting. */
++			remove_all_break();
++			/* Also, if we haven't been able to roundup all
++			 * CPUs, send an 'O' packet informing the user
++			 * as much.  Only need to do this once. */
++			if (!all_cpus_synced)
++				kgdb_msg_write("Not all CPUs have been "
++					       "synced for KGDB\n", 39);
++			remcom_out_buffer[0] = 'S';
++			remcom_out_buffer[1] = hexchars[signo >> 4];
++			remcom_out_buffer[2] = hexchars[signo % 16];
++			break;
++
++		case 'g':	/* return the value of the CPU registers */
++			thread = kgdb_usethread;
++
++			if (!thread) {
++				thread = kgdb_info[processor].task;
++				local_debuggerinfo =
++				    kgdb_info[processor].debuggerinfo;
++			} else {
++				local_debuggerinfo = NULL;
++				for (i = 0; i < NR_CPUS; i++) {
++					/* Try to find the task on some other
++					 * or possibly this node if we do not
++					 * find the matching task then we try
++					 * to approximate the results.
++					 */
++					if (thread == kgdb_info[i].task)
++						local_debuggerinfo =
++						    kgdb_info[i].debuggerinfo;
++				}
++			}
++
++			/* All threads that don't have debuggerinfo should be
++			 * in __schedule() sleeping, since all other CPUs
++			 * are in kgdb_wait, and thus have debuggerinfo. */
++			if (kgdb_ops->shadowth &&
++			    kgdb_usethreadid >= pid_max + num_online_cpus()) {
++				shadowregs = kgdb_shadow_regs(linux_regs,
++							      kgdb_usethreadid -
++							      pid_max -
++							      num_online_cpus
++							      ());
++				if (!shadowregs) {
++					error_packet(remcom_out_buffer,
++						     -EINVAL);
++					break;
++				}
++				regs_to_gdb_regs(gdb_regs, shadowregs);
++			} else if (local_debuggerinfo)
++				regs_to_gdb_regs(gdb_regs, local_debuggerinfo);
++			else {
++				/* Pull stuff saved during
++				 * switch_to; nothing else is
++				 * accessible (or even particularly relevant).
++				 * This should be enough for a stack trace. */
++				sleeping_thread_to_gdb_regs(gdb_regs, thread);
++			}
++			kgdb_mem2hex((char *)gdb_regs, remcom_out_buffer,
++				     NUMREGBYTES);
++			break;
++
++			/* set the value of the CPU registers - return OK */
++		case 'G':
++			kgdb_hex2mem(&remcom_in_buffer[1], (char *)gdb_regs,
++				     NUMREGBYTES);
++
++			if (kgdb_usethread && kgdb_usethread != current)
++				error_packet(remcom_out_buffer, -EINVAL);
++			else {
++				gdb_regs_to_regs(gdb_regs, linux_regs);
++				strcpy(remcom_out_buffer, "OK");
++			}
++			break;
++
++			/* mAA..AA,LLLL  Read LLLL bytes at address AA..AA */
++		case 'm':
++			ptr = &remcom_in_buffer[1];
++			if (kgdb_hex2long(&ptr, &addr) > 0 && *ptr++ == ',' &&
++			    kgdb_hex2long(&ptr, &length) > 0) {
++				if (IS_ERR(ptr = kgdb_mem2hex((char *)addr,
++							      remcom_out_buffer,
++							      length)))
++					error_packet(remcom_out_buffer,
++						     PTR_ERR(ptr));
++			} else
++				error_packet(remcom_out_buffer, -EINVAL);
++			break;
++
++			/* MAA..AA,LLLL: Write LLLL bytes at address AA..AA */
++		case 'M':
++			if (IS_ERR(ptr = write_mem_msg(0)))
++				error_packet(remcom_out_buffer, PTR_ERR(ptr));
++			else
++				strcpy(remcom_out_buffer, "OK");
++			break;
++			/* XAA..AA,LLLL: Write LLLL bytes at address AA..AA */
++		case 'X':
++			if (IS_ERR(ptr = write_mem_msg(1)))
++				error_packet(remcom_out_buffer, PTR_ERR(ptr));
++			else
++				strcpy(remcom_out_buffer, "OK");
++			break;
++
++			/* kill or detach. KGDB should treat this like a
++			 * continue.
++			 */
++		case 'D':
++			if ((error = remove_all_break()) < 0) {
++				error_packet(remcom_out_buffer, error);
++			} else {
++				strcpy(remcom_out_buffer, "OK");
++				kgdb_connected = 0;
++			}
++			put_packet(remcom_out_buffer);
++			goto default_handle;
++
++		case 'k':
++			/* Don't care about error from remove_all_break */
++			remove_all_break();
++			kgdb_connected = 0;
++			goto default_handle;
++
++			/* Reboot */
++		case 'R':
++			/* For now, only honor R0 */
++			if (strcmp(remcom_in_buffer, "R0") == 0) {
++				printk(KERN_CRIT "Executing reboot\n");
++				strcpy(remcom_out_buffer, "OK");
++				put_packet(remcom_out_buffer);
++				emergency_sync();
++				/* Execution should not return from
++				 * machine_restart()
++				 */
++				machine_restart(NULL);
++				kgdb_connected = 0;
++				goto default_handle;
++			}
++
++			/* query */
++		case 'q':
++			switch (remcom_in_buffer[1]) {
++			case 's':
++			case 'f':
++				if (memcmp(remcom_in_buffer + 2, "ThreadInfo",
++					   10)) {
++					error_packet(remcom_out_buffer,
++						     -EINVAL);
++					break;
++				}
++
++				/*
++				 * If we have not yet completed in
++				 * pidhash_init() there isn't much we
++				 * can give back.
++				 */
++				if (init_pid_ns.last_pid == 0) {
++					if (remcom_in_buffer[1] == 'f')
++						strcpy(remcom_out_buffer,
++						       "m0000000000000001");
++					break;
++				}
++
++				if (remcom_in_buffer[1] == 'f') {
++					threadid = 1;
++				}
++				remcom_out_buffer[0] = 'm';
++				ptr = remcom_out_buffer + 1;
++				for (i = 0; i < 17 && threadid < pid_max +
++				     numshadowth; threadid++) {
++					thread = getthread(linux_regs,
++							   threadid);
++					if (thread) {
++						int_to_threadref(&thref,
++								 threadid);
++						pack_threadid(ptr, &thref);
++						ptr += 16;
++						*(ptr++) = ',';
++						i++;
++					}
++				}
++				*(--ptr) = '\0';
++				break;
++
++			case 'C':
++				/* Current thread id */
++				strcpy(remcom_out_buffer, "QC");
++
++				threadid = shadow_pid(current->pid);
++
++				int_to_threadref(&thref, threadid);
++				pack_threadid(remcom_out_buffer + 2, &thref);
++				break;
++			case 'T':
++				if (memcmp(remcom_in_buffer + 1,
++					   "ThreadExtraInfo,", 16)) {
++					error_packet(remcom_out_buffer,
++						     -EINVAL);
++					break;
++				}
++				threadid = 0;
++				ptr = remcom_in_buffer + 17;
++				kgdb_hex2long(&ptr, &threadid);
++				if (!getthread(linux_regs, threadid)) {
++					error_packet(remcom_out_buffer,
++						     -EINVAL);
++					break;
++				}
++				if (threadid < pid_max) {
++					kgdb_mem2hex(getthread(linux_regs,
++							       threadid)->comm,
++						     remcom_out_buffer, 16);
++				} else if (threadid >= pid_max +
++					   num_online_cpus()) {
++					kgdb_shadowinfo(linux_regs,
++							remcom_out_buffer,
++							threadid - pid_max -
++							num_online_cpus());
++				} else {
++					static char tmpstr[23 +
++							   BUF_THREAD_ID_SIZE];
++					sprintf(tmpstr, "Shadow task %d"
++						" for pid 0",
++						(int)(threadid - pid_max));
++					kgdb_mem2hex(tmpstr, remcom_out_buffer,
++						     strlen(tmpstr));
++				}
++				break;
++			}
++			break;
++
++			/* task related */
++		case 'H':
++			switch (remcom_in_buffer[1]) {
++			case 'g':
++				ptr = &remcom_in_buffer[2];
++				kgdb_hex2long(&ptr, &threadid);
++				thread = getthread(linux_regs, threadid);
++				if (!thread && threadid > 0) {
++					error_packet(remcom_out_buffer,
++						     -EINVAL);
++					break;
++				}
++				kgdb_usethread = thread;
++				kgdb_usethreadid = threadid;
++				strcpy(remcom_out_buffer, "OK");
++				break;
++
++			case 'c':
++				ptr = &remcom_in_buffer[2];
++				kgdb_hex2long(&ptr, &threadid);
++				if (!threadid) {
++					kgdb_contthread = NULL;
++				} else {
++					thread = getthread(linux_regs,
++							   threadid);
++					if (!thread && threadid > 0) {
++						error_packet(remcom_out_buffer,
++							     -EINVAL);
++						break;
++					}
++					kgdb_contthread = thread;
++				}
++				strcpy(remcom_out_buffer, "OK");
++				break;
++			}
++			break;
++
++			/* Query thread status */
++		case 'T':
++			ptr = &remcom_in_buffer[1];
++			kgdb_hex2long(&ptr, &threadid);
++			thread = getthread(linux_regs, threadid);
++			if (thread)
++				strcpy(remcom_out_buffer, "OK");
++			else
++				error_packet(remcom_out_buffer, -EINVAL);
++			break;
++		/* Since GDB-5.3, it's been drafted that '0' is a software
++		 * breakpoint, '1' is a hardware breakpoint, so let's do
++		 * that.
++		 */
++		case 'z':
++		case 'Z':
++			bpt_type = &remcom_in_buffer[1];
++			ptr = &remcom_in_buffer[2];
++
++			if (kgdb_ops->set_hw_breakpoint && *bpt_type >= '1') {
++				/* Unsupported */
++				if (*bpt_type > '4')
++					break;
++			} else if (*bpt_type != '0' && *bpt_type != '1')
++				/* Unsupported. */
++				break;
++			/* Test if this is a hardware breakpoint, and
++			 * if we support it. */
++			if (*bpt_type == '1' &&
++			    !(kgdb_ops->flags & KGDB_HW_BREAKPOINT))
++				/* Unsupported. */
++				break;
++
++			if (*(ptr++) != ',') {
++				error_packet(remcom_out_buffer, -EINVAL);
++				break;
++			} else if (kgdb_hex2long(&ptr, &addr)) {
++				if (*(ptr++) != ',' ||
++				    !kgdb_hex2long(&ptr, &length)) {
++					error_packet(remcom_out_buffer,
++						     -EINVAL);
++					break;
++				}
++			} else {
++				error_packet(remcom_out_buffer, -EINVAL);
++				break;
++			}
++
++			if (remcom_in_buffer[0] == 'Z' && *bpt_type == '0')
++				error = kgdb_set_sw_break(addr);
++			else if (remcom_in_buffer[0] == 'z' && *bpt_type == '0')
++				error = kgdb_remove_sw_break(addr);
++			else if (remcom_in_buffer[0] == 'Z')
++				error = kgdb_ops->set_hw_breakpoint(addr,
++								    (int)length,
++								    *bpt_type);
++			else if (remcom_in_buffer[0] == 'z')
++				error = kgdb_ops->remove_hw_breakpoint(addr,
++								       (int)
++								       length,
++								       *bpt_type);
++
++			if (error == 0)
++				strcpy(remcom_out_buffer, "OK");
++			else
++				error_packet(remcom_out_buffer, error);
++
++			break;
++		case 'c':
++		case 's':
++			if (kgdb_contthread && kgdb_contthread != current) {
++				/* Can't switch threads in kgdb */
++				error_packet(remcom_out_buffer, -EINVAL);
++				break;
++			}
++			kgdb_activate_sw_breakpoints();
++			/* Followthrough to default processing */
++		default:
++		      default_handle:
++			error = kgdb_arch_handle_exception(ex_vector, signo,
++							   err_code,
++							   remcom_in_buffer,
++							   remcom_out_buffer,
++							   linux_regs);
++
++			if (error >= 0 || remcom_in_buffer[0] == 'D' ||
++			    remcom_in_buffer[0] == 'k')
++				goto kgdb_exit;
++
++		}		/* switch */
++
++		/* reply to the request */
++		put_packet(remcom_out_buffer);
++	}
++
++ kgdb_exit:
++	/*
++	 * Call the I/O driver's post_exception routine
++	 * if the I/O driver defined one.
++	 */
++	if (kgdb_io_ops.post_exception)
++		kgdb_io_ops.post_exception();
++
++	kgdb_info[processor].debuggerinfo = NULL;
++	kgdb_info[processor].task = NULL;
++	atomic_set(&procindebug[processor], 0);
++
++	if (!debugger_step || !kgdb_contthread) {
++		for (i = 0; i < NR_CPUS; i++)
++			spin_unlock(&slavecpulocks[i]);
++		/* Wait till all the processors have quit
++		 * from the debugger. */
++		for (i = 0; i < NR_CPUS; i++) {
++			while (atomic_read(&procindebug[i])) {
++				int j = 10;	/* an arbitrary number */
++
++				while (--j)
++					cpu_relax();
++			}
++		}
++	}
++
++#ifdef CONFIG_SMP
++	/* This delay has a real purpose.  The problem is that if you
++	 * are single-stepping, you are sending an NMI to all the
++	 * other processors to stop them.  Interrupts come in, but
++	 * don't get handled.  Then you let them go just long enough
++	 * to get into their interrupt routines and use up some stack.
++	 * You stop them again, and then do the same thing.  After a
++	 * while you blow the stack on the other processors.  This
++	 * delay gives some time for interrupts to be cleared out on
++	 * the other processors.
++	 */
++	if (debugger_step)
++		mdelay(2);
++#endif
++ kgdb_restore:
++	/* Free debugger_active */
++	atomic_set(&debugger_active, 0);
++	local_irq_restore(flags);
++
++	return error;
++}
++
++/*
++ * GDB places a breakpoint at this function to know dynamically
++ * loaded objects. It's not defined static so that only one instance with this
++ * name exists in the kernel.
++ */
++
++int module_event(struct notifier_block *self, unsigned long val, void *data)
++{
++	return 0;
++}
++
++static struct notifier_block kgdb_module_load_nb = {
++	.notifier_call = module_event,
++};
++
++void kgdb_nmihook(int cpu, void *regs)
++{
++#ifdef CONFIG_SMP
++	if (!atomic_read(&procindebug[cpu]) && atomic_read(&debugger_active) != (cpu + 1))
++		kgdb_wait((struct pt_regs *)regs);
++#endif
++}
++
++/*
++ * This is called when a panic happens.  All we need to do is
++ * breakpoint().
++ */
++static int kgdb_panic_notify(struct notifier_block *self, unsigned long cmd,
++			     void *ptr)
++{
++	breakpoint();
++
++	return 0;
++}
++
++static struct notifier_block kgdb_panic_notifier = {
++	.notifier_call = kgdb_panic_notify,
++};
++
++/*
++ * Initialization that needs to be done in either of our entry points.
++ */
++static void __init kgdb_internal_init(void)
++{
++	int i;
++
++	/* Initialize our spinlocks. */
++	for (i = 0; i < NR_CPUS; i++)
++		spin_lock_init(&slavecpulocks[i]);
++
++	for (i = 0; i < MAX_BREAKPOINTS; i++)
++		kgdb_break[i].state = bp_none;
++
++	/* Initialize the I/O handles */
++	memset(&kgdb_io_ops_prev, 0, sizeof(kgdb_io_ops_prev));
++
++	/* We can't do much if this fails */
++	register_module_notifier(&kgdb_module_load_nb);
++
++	kgdb_initialized = 1;
++}
++
++static void kgdb_register_for_panic(void)
++{
++	/* Register for panics(). */
++	/* The registration is done in the kgdb_register_for_panic
++	 * routine because KGDB should not try to handle a panic when
++	 * there are no kgdb_io_ops setup. It is assumed that the
++	 * kgdb_io_ops are setup at the time this method is called.
++	 */
++	if (!kgdb_from_module_registered) {
++		atomic_notifier_chain_register(&panic_notifier_list,
++					&kgdb_panic_notifier);
++		kgdb_from_module_registered = 1;
++	}
++}
++
++static void kgdb_unregister_for_panic(void)
++{
++	/* When this routine is called KGDB should unregister from the
++	 * panic handler and clean up, making sure it is not handling any
++	 * break exceptions at the time.
++	 */
++	if (kgdb_from_module_registered) {
++		kgdb_from_module_registered = 0;
++		atomic_notifier_chain_unregister(&panic_notifier_list,
++					  &kgdb_panic_notifier);
++	}
++}
++
++int kgdb_register_io_module(struct kgdb_io *local_kgdb_io_ops)
++{
++
++	if (kgdb_connected) {
++		printk(KERN_ERR "kgdb: Cannot load I/O module while KGDB "
++		       "connected.\n");
++		return -EINVAL;
++	}
++
++	/* Save the old values so they can be restored */
++	if (kgdb_io_handler_cnt >= MAX_KGDB_IO_HANDLERS) {
++		printk(KERN_ERR "kgdb: No more I/O handles available.\n");
++		return -EINVAL;
++	}
++
++	/* Check to see if there is an existing driver and if so save its
++	 * values.  Also check to make sure the same driver was not trying
++	 * to re-register.
++	 */
++	if (kgdb_io_ops.read_char != NULL &&
++        kgdb_io_ops.read_char != local_kgdb_io_ops->read_char) {
++		memcpy(&kgdb_io_ops_prev[kgdb_io_handler_cnt],
++		       &kgdb_io_ops, sizeof(struct kgdb_io));
++		kgdb_io_handler_cnt++;
++	}
++
++	/* Initialize the io values for this module */
++	memcpy(&kgdb_io_ops, local_kgdb_io_ops, sizeof(struct kgdb_io));
++
++	/* Make the call to register kgdb if is not initialized */
++	kgdb_register_for_panic();
++
++	return 0;
++}
++
++void kgdb_unregister_io_module(struct kgdb_io *local_kgdb_io_ops)
++{
++	int i;
++
++	/* Unregister KGDB if there were no other prior io hooks, else
++	 * restore the io hooks.
++	 */
++	if (kgdb_io_handler_cnt > 0 && kgdb_io_ops_prev[0].read_char != NULL) {
++		/* First check if the hook that is in use is the one being
++		 * removed */
++		if (kgdb_io_ops.read_char == local_kgdb_io_ops->read_char) {
++			/* Set 'i' to the value of where the list should be
++			 * shifed */
++			i = kgdb_io_handler_cnt - 1;
++			memcpy(&kgdb_io_ops, &kgdb_io_ops_prev[i],
++			       sizeof(struct kgdb_io));
++		} else {
++			/* Simple case to remove an entry for an I/O handler
++			 * that is not in use */
++			for (i = 0; i < kgdb_io_handler_cnt; i++) {
++				if (kgdb_io_ops_prev[i].read_char ==
++				    local_kgdb_io_ops->read_char)
++					break;
++			}
++		}
++
++		/* Shift all the entries in the handler array so it is
++		 * ordered from oldest to newest.
++		 */
++		kgdb_io_handler_cnt--;
++		for (; i < kgdb_io_handler_cnt; i++) {
++			memcpy(&kgdb_io_ops_prev[i], &kgdb_io_ops_prev[i + 1],
++			       sizeof(struct kgdb_io));
++		}
++		/* Handle the case if we are on the last element and set it
++		 * to NULL; */
++		memset(&kgdb_io_ops_prev[kgdb_io_handler_cnt], 0,
++				sizeof(struct kgdb_io));
++
++		if (kgdb_connected)
++			printk(KERN_ERR "kgdb: WARNING: I/O method changed "
++			       "while kgdb was connected state.\n");
++	} else {
++		/* KGDB is no longer able to communicate out, so
++		 * unregister our hooks and reset state. */
++		kgdb_unregister_for_panic();
++		if (kgdb_connected) {
++			printk(KERN_CRIT "kgdb: I/O module was unloaded while "
++					"a debugging session was running.  "
++					"KGDB will be reset.\n");
++			if (remove_all_break() < 0)
++				printk(KERN_CRIT "kgdb: Reset failed.\n");
++			kgdb_connected = 0;
++		}
++		memset(&kgdb_io_ops, 0, sizeof(struct kgdb_io));
++	}
++}
++
++/*
++ * There are times we need to call a tasklet to cause a breakpoint
++ * as calling breakpoint() at that point might be fatal.  We have to
++ * check that the exception stack is setup, as tasklets may be scheduled
++ * prior to this.  When that happens, it is up to the architecture to
++ * schedule this when it is safe to run.
++ */
++static void kgdb_tasklet_bpt(unsigned long ing)
++{
++	if (CHECK_EXCEPTION_STACK())
++		breakpoint();
++}
++
++DECLARE_TASKLET(kgdb_tasklet_breakpoint, kgdb_tasklet_bpt, 0);
++
++/*
++ * This function can be called very early, either via early_param() or
++ * an explicit breakpoint() early on.
++ */
++static void __init kgdb_early_entry(void)
++{
++	/* Let the architecture do any setup that it needs to. */
++	kgdb_arch_init();
++
++	/*
++	 * Don't try and do anything until the architecture is able to
++	 * setup the exception stack.  In this case, it is up to the
++	 * architecture to hook in and look at us when they are ready.
++	 */
++
++	if (!CHECK_EXCEPTION_STACK()) {
++		kgdb_initialized = -1;
++		/* any kind of break point is deferred to late_init */
++		return;
++	}
++
++	/* Now try the I/O. */
++	/* For early entry kgdb_io_ops.init must be defined */
++	if (!kgdb_io_ops.init || kgdb_io_ops.init()) {
++		/* Try again later. */
++		kgdb_initialized = -1;
++		return;
++	}
++
++	/* Finish up. */
++	kgdb_internal_init();
++
++	/* KGDB can assume that if kgdb_io_ops.init was defined that the
++	 * panic registion should be performed at this time. This means
++	 * kgdb_io_ops.init did not come from a kernel module and was
++	 * initialized statically by a built in.
++	 */
++	if (kgdb_io_ops.init)
++		kgdb_register_for_panic();
++}
++
++/*
++ * This function will always be invoked to make sure that KGDB will grab
++ * what it needs to so that if something happens while the system is
++ * running, KGDB will get involved.  If kgdb_early_entry() has already
++ * been invoked, there is little we need to do.
++ */
++static int __init kgdb_late_entry(void)
++{
++	int need_break = 0;
++
++	/* If kgdb_initialized is -1 then we were passed kgdbwait. */
++	if (kgdb_initialized == -1)
++		need_break = 1;
++
++	/*
++	 * If we haven't tried to initialize KGDB yet, we need to call
++	 * kgdb_arch_init before moving onto the I/O.
++	 */
++	if (!kgdb_initialized)
++		kgdb_arch_init();
++
++	if (kgdb_initialized != 1) {
++		if (kgdb_io_ops.init && kgdb_io_ops.init()) {
++			/* When KGDB allows I/O via modules and the core
++			 * I/O init fails KGDB must default to defering the
++			 * I/O setup, and appropriately print an error about
++			 * it.
++			 */
++			printk(KERN_ERR "kgdb: Could not setup core I/O "
++			       "for KGDB.\n");
++			printk(KERN_INFO "kgdb: Defering I/O setup to kernel "
++			       "module.\n");
++			memset(&kgdb_io_ops, 0, sizeof(struct kgdb_io));
++		}
++
++		kgdb_internal_init();
++
++		/* KGDB can assume that if kgdb_io_ops.init was defined that
++		 * panic registion should be performed at this time. This means
++		 * kgdb_io_ops.init did not come from a kernel module and was
++		 * initialized statically by a built in.
++		 */
++		if (kgdb_io_ops.init)
++			kgdb_register_for_panic();
++	}
++
++	/* Registering to reboot notifier list*/
++	register_reboot_notifier(&kgdb_reboot_notifier);
++
++	/* Now do any late init of the I/O. */
++	if (kgdb_io_ops.late_init)
++		kgdb_io_ops.late_init();
++
++	if (need_break) {
++		printk(KERN_CRIT "kgdb: Waiting for connection from remote"
++		       " gdb...\n");
++		breakpoint();
++	}
++
++	return 0;
++}
++
++late_initcall(kgdb_late_entry);
++
++/*
++ * This function will generate a breakpoint exception.  It is used at the
++ * beginning of a program to sync up with a debugger and can be used
++ * otherwise as a quick means to stop program execution and "break" into
++ * the debugger.
++ */
++void breakpoint(void)
++{
++	atomic_set(&kgdb_setting_breakpoint, 1);
++	wmb();
++	BREAKPOINT();
++	wmb();
++	atomic_set(&kgdb_setting_breakpoint, 0);
++}
++
++EXPORT_SYMBOL(breakpoint);
++
++#ifdef CONFIG_MAGIC_SYSRQ
++static void sysrq_handle_gdb(int key, struct tty_struct *tty)
++{
++	printk("Entering GDB stub\n");
++	breakpoint();
++}
++static struct sysrq_key_op sysrq_gdb_op = {
++	.handler = sysrq_handle_gdb,
++	.help_msg = "Gdb",
++	.action_msg = "GDB",
++};
++
++static int gdb_register_sysrq(void)
++{
++	printk("Registering GDB sysrq handler\n");
++	register_sysrq_key('g', &sysrq_gdb_op);
++	return 0;
++}
++
++module_init(gdb_register_sysrq);
++#endif
++
++static int kgdb_notify_reboot(struct notifier_block *this,
++                            unsigned long code, void *x)
++{
++
++	unsigned long flags;
++
++	/* If we're debugging, or KGDB has not connected, don't try
++	 * and print. */
++	if (!kgdb_connected || atomic_read(&debugger_active) != 0)
++		return 0;
++	if ((code == SYS_RESTART) || (code == SYS_HALT) || (code == SYS_POWER_OFF)){
++		local_irq_save(flags);
++		put_packet("X00");
++		local_irq_restore(flags);
++	}
++	return NOTIFY_DONE;
++}
++
++#ifdef CONFIG_KGDB_CONSOLE
++void kgdb_console_write(struct console *co, const char *s, unsigned count)
++{
++	unsigned long flags;
++
++	/* If we're debugging, or KGDB has not connected, don't try
++	 * and print. */
++	if (!kgdb_connected || atomic_read(&debugger_active) != 0)
++		return;
++
++	local_irq_save(flags);
++	kgdb_msg_write(s, count);
++	local_irq_restore(flags);
++}
++
++struct console kgdbcons = {
++	.name = "kgdb",
++	.write = kgdb_console_write,
++	.flags = CON_PRINTBUFFER | CON_ENABLED,
++};
++static int __init kgdb_console_init(void)
++{
++	register_console(&kgdbcons);
++	return 0;
++}
++
++console_initcall(kgdb_console_init);
++#endif
++
++static int __init opt_kgdb_enter(char *str)
++{
++	/* We've already done this by an explicit breakpoint() call. */
++	if (kgdb_initialized)
++		return 0;
++
++	kgdb_early_entry();
++	if (kgdb_initialized == 1)
++		printk(KERN_CRIT "Waiting for connection from remote "
++		       "gdb...\n");
++	else {
++		printk(KERN_CRIT "KGDB cannot initialize I/O yet.\n");
++		return 0;
++	}
++
++	breakpoint();
++
++	return 0;
++}
++
++early_param("kgdbwait", opt_kgdb_enter);
+Index: linux-2.6.21.1/kernel/sched.c
+===================================================================
+--- linux-2.6.21.1.orig/kernel/sched.c
++++ linux-2.6.21.1/kernel/sched.c
+@@ -51,6 +51,7 @@
+ #include <linux/times.h>
+ #include <linux/tsacct_kern.h>
+ #include <linux/kprobes.h>
++#include <linux/kgdb.h>
+ #include <linux/delayacct.h>
+ #include <asm/tlb.h>
+ 
+@@ -6793,6 +6794,9 @@ void __might_sleep(char *file, int line)
+ #ifdef in_atomic
+ 	static unsigned long prev_jiffy;	/* ratelimiting */
+ 
++	if (atomic_read(&debugger_active))
++		return;
++
+ 	if ((in_atomic() || irqs_disabled()) &&
+ 	    system_state == SYSTEM_RUNNING && !oops_in_progress) {
+ 		if (time_before(jiffies, prev_jiffy + HZ) && prev_jiffy)
+Index: linux-2.6.21.1/lib/Kconfig.debug
+===================================================================
+--- linux-2.6.21.1.orig/lib/Kconfig.debug
++++ linux-2.6.21.1/lib/Kconfig.debug
+@@ -446,3 +446,5 @@ config FAULT_INJECTION_STACKTRACE_FILTER
+ 	select FRAME_POINTER
+ 	help
+ 	  Provide stacktrace filter for fault-injection capabilities
++
++source "lib/Kconfig.kgdb"
+Index: linux-2.6.21.1/lib/Kconfig.kgdb
+===================================================================
+--- /dev/null
++++ linux-2.6.21.1/lib/Kconfig.kgdb
+@@ -0,0 +1,60 @@
++
++config WANT_EXTRA_DEBUG_INFORMATION
++	bool
++	select DEBUG_INFO
++	select UNWIND_INFO
++	select FRAME_POINTER if X86
++	default n
++
++config UNWIND_INFO
++	bool
++	default n
++
++config KGDB
++	bool "KGDB: kernel debugging with remote gdb"
++	select WANT_EXTRA_DEBUG_INFORMATION
++	depends on DEBUG_KERNEL
++	help
++	  If you say Y here, it will be possible to remotely debug the
++	  kernel using gdb.  Documentation of kernel debugger is available
++	  at http://kgdb.sourceforge.net as well as in DocBook form
++	  in Documentation/DocBook/.  If unsure, say N.
++
++config KGDB_ARCH_HAS_SHADOW_INFO
++	bool
++
++config KGDB_CONSOLE
++	bool "KGDB: Console messages through gdb"
++	depends on KGDB
++	  help
++	    If you say Y here, console messages will appear through gdb.
++	    Other consoles such as tty or ttyS will continue to work as usual.
++	    Note, that if you use this in conjunction with KGDB_ETH, if the
++	    ethernet driver runs into an error condition during use with KGDB
++	    it is possible to hit an infinite recusrion, causing the kernel
++	    to crash, and typically reboot.  For this reason, it is preferable
++	    to use NETCONSOLE in conjunction with KGDB_ETH instead of
++	    KGDB_CONSOLE.
++
++choice
++	prompt "Method for KGDB communication"
++	depends on KGDB
++	default KGDB_ONLY_MODULES
++	help
++	  There are a number of different ways in which you can communicate
++	  with KGDB.  The most common is via serial, with the 8250 driver
++	  (should your hardware have an 8250, or ns1655x style uart).
++	  Another option is to use the NETPOLL framework and UDP, should
++	  your ethernet card support this.  Other options may exist.
++	  You can elect to have one core I/O driver that is built into the
++	  kernel for debugging as the kernel is booting, or using only
++	  kernel modules.
++
++config KGDB_ONLY_MODULES
++	bool "KGDB: Use only kernel modules for I/O"
++	depends on MODULES
++	help
++	  Use only kernel modules to configure KGDB I/O after the
++	  kernel is booted.
++
++endchoice

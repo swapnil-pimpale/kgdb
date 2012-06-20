@@ -1,0 +1,43 @@
+x86_64-no_context_hook.patch
+
+From: Jason Wessel <jason.wessel@windriver.com>
+Subject: [PATCH] This adds a call to notify_die()
+
+A call to notify_die is added in the "no context" portion of
+do_page_fault() as someone on the chain might care and want to do a
+fixup.
+
+Signed-off-by: Tom Rini <trini@kernel.crashing.org>
+Signed-off-by: Jason Wessel <jason.wessel@windriver.com>
+---
+ arch/x86_64/mm/fault.c      |    4 ++++
+ include/asm-x86_64/kdebug.h |    1 +
+ 2 files changed, 5 insertions(+)
+
+Index: linux-2.6.21.1/arch/x86_64/mm/fault.c
+===================================================================
+--- linux-2.6.21.1.orig/arch/x86_64/mm/fault.c
++++ linux-2.6.21.1/arch/x86_64/mm/fault.c
+@@ -528,6 +528,10 @@ no_context:
+ 	if (is_errata93(regs, address))
+ 		return; 
+ 
++	if (notify_die(DIE_PAGE_FAULT_NO_CONTEXT, "no context", regs,
++				error_code, 14, SIGSEGV) == NOTIFY_STOP)
++		return;
++
+ /*
+  * Oops. The kernel tried to access some bad page. We'll have to
+  * terminate things with extreme prejudice.
+Index: linux-2.6.21.1/include/asm-x86_64/kdebug.h
+===================================================================
+--- linux-2.6.21.1.orig/include/asm-x86_64/kdebug.h
++++ linux-2.6.21.1/include/asm-x86_64/kdebug.h
+@@ -34,6 +34,7 @@ enum die_val {
+ 	DIE_CALL,
+ 	DIE_NMI_IPI,
+ 	DIE_PAGE_FAULT,
++	DIE_PAGE_FAULT_NO_CONTEXT,
+ };
+ 
+ static inline int notify_die(enum die_val val, const char *str,

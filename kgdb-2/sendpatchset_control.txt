@@ -1,0 +1,35 @@
+# this is a comment
+SMTP: smtp.west.cox.net
+From: Tom Rini <trini@kernel.crashing.org>
+To: Andrew Morton <akpm@osdl.org>
+Cc: lkml <linux-kernel@vger.kernel.org>
+Subject: [PATCH,RFC 2.6.14 00/14] KGDB Support
+File: core_comments.txt
+Subject: [PATCH,RFC 2.6.14 01/14] KGDB: core infrastructure
+File: core-lite.patch 
+Subject: [PATCH,RFC 2.6.14 02/14] KGDB: 8250-like UART driver
+File: 8250.patch 
+Subject: [PATCH,RFC 2.6.14 03/14] KGDB: i386-specific changes
+File: i386-lite.patch 
+Subject: [PATCH,RFC 2.6.14 04/14] KGDB: powerpc-specific changes
+File: powerpc-lite.patch 
+Subject: [PATCH,RFC 2.6.14 05/14] KGDB: netpoll-based ethernet driver
+File: eth.patch 
+Subject: [PATCH,RFC 2.6.14 06/14] KGDB: MIPS-specific changes
+File: mips-lite.patch 
+Subject: [PATCH,RFC 2.6.14 07/14] KGDB: IA64-specific changes
+File: ia64-lite.patch 
+Subject: [PATCH,RFC 2.6.14 08/14] x86_64: Add a notifier hook to the "no context" part of do_page_fault
+File: x86_64-no_context_hook.patch
+Subject: [PATCH,RFC 2.6.14 09/14] KGDB: x86_64-specific changes
+File: x86_64-lite.patch 
+Subject: [PATCH,RFC 2.6.14 10/14] KGDB: SuperH-specific changes
+File: sh-lite.patch 
+Subject: [PATCH,RFC 2.6.14 11/14] KGDB: ARM-specific changes
+File: arm-lite.patch 
+Subject: [PATCH,RFC 2.6.14 12/14] KGDB: CFI annotations for better unwinding
+File: cfi_annotations.patch 
+Subject: [PATCH,RFC 2.6.14 13/14] KGDB: Fix for 'lost' SysRq events
+File: sysrq_bugfix.patch
+Subject: [PATCH,RFC 2.6.14 14/14] KGDB: Better support for loaded modules
+File: module.patch 

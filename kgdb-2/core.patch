@@ -1,0 +1,106 @@
+core.patch
+
+From: Jason Wessel <jason.wessel@windriver.com>
+Subject: [PATCH] Soft lockup fixes to kgdb core
+
+Allow KGDB to obtain processor sync control from the softlockup
+routines.
+
+Signed-off-by: Milind Dumbare <milind@linsyssoft.com>
+Signed-off-by: Jason Wessel <jason.wessel@windriver.com>
+
+---
+ include/linux/kgdb.h |    1 +
+ kernel/kgdb.c        |    5 +++++
+ kernel/softlockup.c  |    4 ++++
+ kernel/timer.c       |    5 +++++
+ 4 files changed, 15 insertions(+)
+
+Index: linux-2.6.21.1/include/linux/kgdb.h
+===================================================================
+--- linux-2.6.21.1.orig/include/linux/kgdb.h
++++ linux-2.6.21.1/include/linux/kgdb.h
+@@ -45,6 +45,7 @@ extern struct tasklet_struct kgdb_taskle
+ 
+ extern atomic_t kgdb_setting_breakpoint;
+ extern atomic_t cpu_doing_single_step;
++extern atomic_t kgdb_sync_softlockup[NR_CPUS];
+ 
+ extern struct task_struct *kgdb_usethread, *kgdb_contthread;
+ 
+Index: linux-2.6.21.1/kernel/kgdb.c
+===================================================================
+--- linux-2.6.21.1.orig/kernel/kgdb.c
++++ linux-2.6.21.1/kernel/kgdb.c
+@@ -125,6 +125,8 @@ struct debuggerinfo_struct {
+ /* to keep track of the CPU which is doing the single stepping*/
+ atomic_t cpu_doing_single_step = ATOMIC_INIT(-1);
+ 
++atomic_t  kgdb_sync_softlockup[NR_CPUS] = {ATOMIC_INIT(0)};
++
+ /* reboot notifier block */
+ static struct notifier_block kgdb_reboot_notifier = {
+ 	.notifier_call  = kgdb_notify_reboot,
+@@ -590,6 +592,7 @@ static void kgdb_wait(struct pt_regs *re
+ 	kgdb_info[processor].debuggerinfo = regs;
+ 	kgdb_info[processor].task = current;
+ 	atomic_set(&procindebug[processor], 1);
++	atomic_set(&kgdb_sync_softlockup[raw_smp_processor_id()], 1);
+ 
+ 	/* Wait till master processor goes completely into the debugger.
+ 	 * FIXME: this looks racy */
+@@ -906,6 +909,8 @@ int kgdb_handle_exception(int ex_vector,
+ 			udelay(1);
+ 	}
+ 
++	atomic_set(&kgdb_sync_softlockup[raw_smp_processor_id()], 1);
++
+ 	/*
+ 	 * Don't enter if the last instance of the exception handler wanted to
+ 	 * come into the debugger again.
+Index: linux-2.6.21.1/kernel/softlockup.c
+===================================================================
+--- linux-2.6.21.1.orig/kernel/softlockup.c
++++ linux-2.6.21.1/kernel/softlockup.c
+@@ -13,6 +13,7 @@
+ #include <linux/kthread.h>
+ #include <linux/notifier.h>
+ #include <linux/module.h>
++#include <linux/kgdb.h>
+ 
+ static DEFINE_SPINLOCK(print_lock);
+ 
+@@ -37,6 +38,9 @@ static struct notifier_block panic_block
+ void touch_softlockup_watchdog(void)
+ {
+ 	__raw_get_cpu_var(touch_timestamp) = jiffies;
++#ifdef CONFIG_KGDB
++	atomic_set(&kgdb_sync_softlockup[raw_smp_processor_id()], 0);
++#endif
+ }
+ EXPORT_SYMBOL(touch_softlockup_watchdog);
+ 
+Index: linux-2.6.21.1/kernel/timer.c
+===================================================================
+--- linux-2.6.21.1.orig/kernel/timer.c
++++ linux-2.6.21.1/kernel/timer.c
+@@ -36,6 +36,7 @@
+ #include <linux/delay.h>
+ #include <linux/tick.h>
+ #include <linux/kallsyms.h>
++#include <linux/kgdb.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+@@ -1287,7 +1288,11 @@ static void run_timer_softirq(struct sof
+  */
+ void run_local_timers(void)
+ {
++	int this_cpu = smp_processor_id();
+ 	raise_softirq(TIMER_SOFTIRQ);
++#ifdef CONFIG_KGDB
++	if(!atomic_read(&kgdb_sync_softlockup[this_cpu]))
++#endif
+ 	softlockup_tick();
+ }
+ 

@@ -1,0 +1,23 @@
+# Source to use: linux-2.6.21.4
+core-lite.patch 
+8250.patch 
+netpoll_pass_skb_to_rx_hook.patch
+eth.patch 
+i386-lite.patch 
+powerpc-lite.patch 
+mips-lite.patch 
+ia64-lite.patch 
+x86_64-no_context_hook.patch
+x86_64-lite.patch 
+# The sh-lite needs a re-port for the sh-sci.c from the 2.6.18 testing git tree
+sh-lite.patch 
+arm-lite.patch 
+sysrq_bugfix.patch
+module.patch 
+core.patch
+powerpc.patch
+i386-hw_breakpoints.patch
+x86_64-hw_breakpoints.patch
+mips64_pt_regs_padding.patch
+# The ia64.patch is not ready for the mainline
+#ia64.patch

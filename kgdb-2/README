@@ -1,0 +1,81 @@
+Base Kernel version: 2.6.21.1
+
+Patch:
+------
+We use quilt (http://savannah.nongnu.org/projects/quilt) to manage our
+patches.  If you have quilt and a downloaded copy of the base kernel
+version in bz2 format,, the easiest way to set things up is:
+$ tar jxf linux-<base_kernel_version>.tar.bz2
+$ cp -a kgdb-2 linux-<base_kernel_version>/patches
+$ cd linux-<base_kernel_version>
+$ quilt push -a
+
+To get KGDB applied into a kernel tree.  If you do not want to use quilt, you
+must apply all patches in the order they are listed in the series file.
+This is most easily done as:
+$ tar jxf linux-<base_kernel_version>.tar.bz2
+$ cd linux-<base_kernel_version>
+$ for p in $(grep patch ../kgdb-2/series);do patch -p1 -si ../kgdb-2/$p;done
+
+Build:
+------
+Enable following config options (in this order).
+
+Kernel hacking ->
+	KGDB: kernel debugging with remote gdb ->
+		KGDB: Thread analysis
+		KGDB: Console messages through gdb
+Device drivers ->
+	Character devices ->
+		Serial drivers ->
+			KGDB: On generic serial port (8250)
+	
+Boot:
+-----
+Put 'kgdbwait' on the command line if you have configured KGDB to use the
+serial port you want, and you want KGDB to stop on boot.  If you want to
+change the options for the serial line and are using the kgdb8250 driver,
+pass kgdb8250=0,115200 for example to use ttyS0 at 115200 baud.
+Example: For serial line ttyS0 and baud of 115200 command line parameters 
+would be :  kgdb8250=0,115200 kgdbwait
+Example: To have KGDB stop and wait for a connection on boot : kgdbwait
+
+Since the update for Linux 2.6.8-rc1, which makes use of 'early_param',
+you will see the following message similar to the following (example
+taken from i386) if you pass 'kgdbwait' on the command line:
+	"Uncompressing Linux... Ok, booting the kernel."
+If you don't pass 'kgdbwait' and connect to the target via serial or
+ethernet, or use SysRq-G, you will see the following explicit message, on
+all architectures:
+	"Waiting for connection from remote GDB"
+
+Now on the development machine start the gdb as shown below.
+   % gdb ./vmlinux
+   (gdb) set remotebaud 115200
+   (gdb) target remote /dev/ttyS0
+
+Example for kgdb ethernet interface
+kgdboe=@10.0.0.6/,@10.0.0.3/ (that's kgdboe=@LOCAL-IP/,@REMOTE-IP/)
+Then
+   % gdb ./vmlinux
+   (gdb) target remote udp:HOSTNAME:6443
+
+Module Debugging:
+-----------------
+	For module debuggin with KGDB use gdbmod-2.4, which is base gdb(6.4) 
+patched with feature for module debugging. It can be found at 
+http://kgdb.linsyssoft.com/downloads/gdbmod-2.4.bz2 . Sources can be found at 
+http://kgdb.linsyssoft.com/downloads/gdb-6.4-kgdb-2.4.tar.bz2
+   % gdbmod-2.4 ./vmlinux
+
+Debugging over ethernet:
+------------------------
+NAPI must be disabled in kernel's menuconfig for debugging over ethernet. 
+NAPI is required for fast communication on 1G and 10G ethernet cards. 
+It causes a card to start in ethernet driven mode and switch to polling mode 
+on arrival of a packet. The polling mode is turned off as soon as incoming 
+packets take a pause. KGDB can't live with such changes because it preempts 
+normal processing. Even with 100M ethernet cards NAPI should be disabled.
+
+Goto http://kgdb.linsyssoft.com/ or type 'make htmldocs' (or pdfdocs,
+or psdocs and so on, see 'make help' for a listing) for more information.

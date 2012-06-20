@@ -1,0 +1,173 @@
+x86_64-hw_breakpoints.patch
+
+From: Jason Wessel <jason.wessel@windriver.com>
+Subject: [PATCH] This adds hardware breakpoint support for x86_64.
+
+This is the minimal set of routines support hw breakpoints on the x86
+arch rewritten by Jason Wessel, based on the work by Milind Dumbare.
+
+Signed-off-by: Milind Dumbare <milind@linsyssoft.com>
+Signed-off-by: Jason Wessel <jason.wessel@windriver.com>
+
+ arch/i386/kernel/kgdb.c   |  119 ++++++++++++++++++++++++++++++++++++++++++++--
+ arch/x86_64/kernel/kgdb.c |  117 ++++++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 230 insertions(+), 6 deletions(-)
+---
+
+Index: linux-2.6.21.1/arch/x86_64/kernel/kgdb.c
+===================================================================
+--- linux-2.6.21.1.orig/arch/x86_64/kernel/kgdb.c
++++ linux-2.6.21.1/arch/x86_64/kernel/kgdb.c
+@@ -17,6 +17,7 @@
+  * Copyright (C) 2000-2001 VERITAS Software Corporation.
+  * Copyright (C) 2002 Andi Kleen, SuSE Labs
+  * Copyright (C) 2004 LinSysSoft Technologies Pvt. Ltd.
++ * Copyright (C) 2007 Jason Wessel, Wind River Systems, Inc.
+  */
+ /****************************************************************************
+  *  Contributor:     Lake Stevens Instrument Division$
+@@ -136,10 +137,115 @@ enabled:0}, {
+ enabled:0}, {
+ enabled:0}};
+ 
++static void kgdb_correct_hw_break(void)
++{
++	int breakno;
++	int correctit;
++	int breakbit;
++	unsigned long dr7;
++
++	get_debugreg(dr7, 7);
++	correctit = 0;
++	for (breakno = 0; breakno < 3; breakno++) {
++		breakbit = 2 << (breakno << 1);
++ 		if (!(dr7 & breakbit) && breakinfo[breakno].enabled) {
++			correctit = 1;
++			dr7 |= breakbit;
++			dr7 &= ~(0xf0000 << (breakno << 2));
++			dr7 |= (((breakinfo[breakno].len << 2) |
++				 breakinfo[breakno].type) << 16) <<
++			    (breakno << 2);
++			switch (breakno) {
++			case 0:
++				set_debugreg(breakinfo[breakno].addr, 0);
++				break;
++
++			case 1:
++				set_debugreg(breakinfo[breakno].addr, 1);
++				break;
++
++			case 2:
++				set_debugreg(breakinfo[breakno].addr, 2);
++				break;
++
++			case 3:
++				set_debugreg(breakinfo[breakno].addr, 3);
++				break;
++			}
++		} else if ((dr7 & breakbit) && !breakinfo[breakno].enabled) {
++			correctit = 1;
++			dr7 &= ~breakbit;
++			dr7 &= ~(0xf0000 << (breakno << 2));
++		}
++	}
++	if (correctit)
++		set_debugreg(dr7, 7);
++}
++
++static int kgdb_remove_hw_break(unsigned long addr, int len,
++						 enum kgdb_bptype bptype)
++{
++	int i, idx = -1;
++	for (i = 0; i < 4; i++) {
++		if (breakinfo[i].addr == addr && breakinfo[i].enabled) {
++			idx = i;
++			break;
++		}
++	}
++	if (idx == -1)
++		return -1;
++
++	breakinfo[idx].enabled = 0;
++	return 0;
++}
++
++static void kgdb_remove_all_hw_break(void)
++{
++	int i;
++
++	for (i = 0; i < 4; i++) {
++		memset(&breakinfo[i], 0, sizeof(struct hw_breakpoint));
++	}
++}
++
++static int kgdb_set_hw_break(unsigned long addr, int len,
++					  enum kgdb_bptype bptype)
++{
++	int i, idx = -1;
++	for (i = 0; i < 4; i++) {
++		if (!breakinfo[i].enabled) {
++			idx = i;
++			break;
++		}
++	}
++	if (idx == -1)
++		return -1;
++	if (bptype == bp_hardware_breakpoint) {
++		breakinfo[idx].type = 0;
++		breakinfo[idx].len = 0;
++	} else if (bptype == bp_write_watchpoint) {
++		breakinfo[idx].type = 1;
++		if (len == 1 || len == 2 || len == 4)
++			breakinfo[idx].len = len - 1;
++		else
++			return -1;
++	} else if (bptype == bp_access_watchpoint) {
++		breakinfo[idx].type = 3;
++		if (len == 1 || len == 2 || len == 4)
++			breakinfo[idx].len = len - 1;
++		else
++			return -1;
++	} else
++		return -1;
++	breakinfo[idx].enabled = 1;
++	breakinfo[idx].addr = addr;
++	return 0;
++}
++
+ void kgdb_disable_hw_debug(struct pt_regs *regs)
+ {
+ 	/* Disable hardware debugging while we are in kgdb */
+-	asm volatile ("movq %0,%%db7": /* no output */ :"r" (0UL));
++	set_debugreg(0UL, 7);
+ }
+ 
+ void kgdb_post_master_code(struct pt_regs *regs, int e_vector, int err_code)
+@@ -187,7 +293,7 @@ int kgdb_arch_handle_exception(int e_vec
+ 
+ 		}
+ 
+-		asm volatile ("movq %%db6, %0\n":"=r" (dr6));
++		get_debugreg(dr6, 6);
+ 		if (!(dr6 & 0x4000)) {
+ 			for (breakno = 0; breakno < 4; ++breakno) {
+ 				if (dr6 & (1 << breakno)) {
+@@ -200,7 +306,8 @@ int kgdb_arch_handle_exception(int e_vec
+ 				}
+ 			}
+ 		}
+-		asm volatile ("movq %0, %%db6\n"::"r" (0UL));
++		set_debugreg(0UL, 6);
++		kgdb_correct_hw_break();
+ 
+ 		return (0);
+ 	}			/* switch */
+@@ -346,4 +453,8 @@ struct kgdb_arch arch_kgdb_ops = {
+ 	.gdb_bpt_instr = {0xcc},
+ 	.flags = KGDB_HW_BREAKPOINT,
+ 	.shadowth = 1,
++	.set_hw_breakpoint = kgdb_set_hw_break,
++	.remove_hw_breakpoint = kgdb_remove_hw_break,
++	.remove_all_hw_break = kgdb_remove_all_hw_break,
++	.correct_hw_break = kgdb_correct_hw_break,
+ };
