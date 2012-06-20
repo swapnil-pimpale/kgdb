@@ -1,0 +1,23 @@
+About KGDB:
+
+KGDB is a source level debugger for linux kernel. It is used along with gdb to debug linux kernel. Kernel developers can debug a kernel similar to application programs using KGDB. It makes it possible to place breakpoints in kernel code, step through the code and observe variables. Two machines are required for using KGDB. One of these machines is a development machine and the other is a test machine. The machines are connected through a serial line: a null-modem cable which connects their serial ports. The kernel to be debugged runs on the test machine. GDB runs on the development machine. The serial line is used by gdb to communicate to the kernel being debugged. Recent KGDB versions also have the support for ethernet as a medium for connecting development and test machines.
+
+First KGDB patch was written by Dave Grothe in 1997. It had a basic kernel debugging functionality for i386 architecture. Amit Kale took over the patch in 2000 to start a KGDB project at sourceforge.net. Starting the project provided a place where kernel developers could find documentation about KGDB and download KGDB for the kernel they worked with. Over the years Amit enhanced KGDB with new features like SMP support, automatic module loading in GDB and readable backtraces, support for kernels from 2.0.x to 2.6.x versions and support for other architectures with the help from several kernel developers. The KGDB project was moved over to (kgdb.linsyssoft.com) after Amit founded LinSysSoft Technologies Pvt. Ltd. to add resources for improving KGDB at a faster pace. The KGDB credits page (http://kgdb.geeksofpune.in/credits.htm) lists the name of kernel developers who have contributed to KGDB. KGDB source repository and mailing list are maintained as part of the KGDB project at sourceforge.net (http://sourceforge.net/projects/kgdb/)
+
+KGDB is featured in following articles:
+2001: Remote Debugging of Loadable Kernel Modules with KGDB: a knowledge-based article for Getting Started - This article is about debugging of kernel modules using KGDB (http://www.linuxjournal.com/article/4525)
+
+2003: Kernel Development - Discusses the release of 2.6.0 kernel. It mentiones KGDB as the development tool for the kernel (http://lwn.net/Articles/63639/)
+
+Miscellaneous:
+1. Useful Links:
+   http://kgdb.geeksofpune.in/
+   http://kgdb.geeksofpune.in/downloads
+
+2. Active Developer:
+   Amit Kale (amitkale@geeksofpune.in)
+   Swapnil Pimpale (pimpale.swapnil@gmail.com)
+
+3. Bug Report:
+   kgdb-bugreport@lists.sourceforge.net
+
