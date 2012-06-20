@@ -1,0 +1,519 @@
+Index: gdb-6.4/gdb/solib.c
+===================================================================
+--- gdb-6.4.orig/gdb/solib.c
++++ gdb-6.4/gdb/solib.c
+@@ -46,6 +46,7 @@
+ #include "solist.h"
+ #include "observer.h"
+ #include "readline/readline.h"
++#include <glob.h>
+ 
+ /* Architecture-specific operations.  */
+ 
+@@ -71,6 +72,7 @@ solib_ops (struct gdbarch *gdbarch)
+ 
+ 
+ /* external data declarations */
++extern int debugkernel;
+ 
+ /* FIXME: gdbarch needs to control this variable */
+ struct target_so_ops *current_target_so_ops;
+@@ -102,6 +104,172 @@ The search path for loading non-absolute
+ 		    value);
+ }
+ 
++/* Return True if the file NAME exists and is a regular file */
++static int
++is_regular_file (const char *name)
++{
++  struct stat st;
++  const int status = stat (name, &st);
++
++  /* Stat should never fail except when the file does not exist.
++     If stat fails, analyze the source of error and return True
++     unless the file does not exist, to avoid returning false results
++     on obscure systems where stat does not work as expected.
++   */
++  if (status != 0)
++    return (errno != ENOENT);
++
++  return S_ISREG (st.st_mode);
++}
++
++/* Open a file named STRING, searching path PATH (dir names sep by some char)
++   using mode MODE and protection bits PROT in the calls to open.
++
++   If TRY_CWD_FIRST, try to open ./STRING before searching PATH.
++   (ie pretend the first element of PATH is ".").  This also indicates
++   that a slash in STRING disables searching of the path (this is
++   so that "exec-file ./foo" or "symbol-file ./foo" insures that you
++   get that particular version of foo or an error message).
++
++   If FILENAME_OPENED is non-null, set it to a newly allocated string naming
++   the actual file opened (this string will always start with a "/").  We
++   have to take special pains to avoid doubling the "/" between the directory
++   and the file, sigh!  Emacs gets confuzzed by this when we print the
++   source file name!!! 
++
++   If a file is found, return the descriptor.
++   Otherwise, return -1, with errno set for the last name we tried to open.  */
++
++/*  >>>> This should only allow files of certain types,
++    >>>>  eg executable, non-directory */
++static int
++module_openp (const char *path, int try_cwd_first, const char *string,
++       int mode, int prot,
++       char **filename_opened)
++{
++  register int fd;
++  register char *filename;
++  const char *p;
++  const char *p1;
++  register int len;
++  int alloclen;
++  int uscount;
++  const char *fnptr;
++  char *fnptr2;
++  glob_t globbuf;
++
++  if (!path)
++    path = ".";
++
++#if defined(_WIN32) || defined(__CYGWIN__)
++  mode |= O_BINARY;
++#endif
++
++  /* ./foo => foo */
++  while (string[0] == '.' && IS_DIR_SEPARATOR (string[1]))
++    string += 2;
++
++  for (uscount = 0, fnptr = string; *fnptr; fnptr++)
++      if(*fnptr== '_')
++	uscount++;
++  alloclen = strlen (path) + strlen (string) + 2 + uscount * 4;
++  filename = alloca (alloclen);
++  fd = -1;
++  for (p = path; p; p = p1 ? p1 + 1 : 0)
++    {
++      p1 = strchr (p, DIRNAME_SEPARATOR);
++      if (p1)
++	len = p1 - p;
++      else
++	len = strlen (p);
++
++      if (len == 4 && p[0] == '$' && p[1] == 'c'
++	  && p[2] == 'w' && p[3] == 'd')
++	{
++	  /* Name is $cwd -- insert current directory name instead.  */
++	  int newlen;
++
++	  /* First, realloc the filename buffer if too short. */
++	  len = strlen (current_directory);
++	  newlen = len + strlen (string) + 2;
++	  if (newlen > alloclen)
++	    {
++	      alloclen = newlen;
++	      filename = alloca (alloclen);
++	    }
++	  strcpy (filename, current_directory);
++	}
++      else
++	{
++	  /* Normal file name in path -- just use it.  */
++	  strncpy (filename, p, len);
++	  filename[len] = 0;
++	}
++
++      /* Remove trailing slashes */
++      while (len > 0 && IS_DIR_SEPARATOR (filename[len - 1]))
++	filename[--len] = 0;
++
++      strcat (filename + len, SLASH_STRING);
++      fnptr2 = filename + strlen(filename);
++      for (uscount = 0, fnptr = string; ;fnptr++)
++	{
++	  if(*fnptr== '_')
++	    {
++	      *(fnptr2++) = '[';
++	      *(fnptr2++) = '_';
++	      *(fnptr2++) = '-';
++	      *(fnptr2++) = ']';
++	    }
++	  else
++	    {
++	      *(fnptr2++) = *fnptr;
++	      if (!*fnptr)
++		break;
++	    }
++	}
++      globbuf.gl_offs = 0;
++      glob(filename, GLOB_DOOFFS, NULL, &globbuf);
++      if (!globbuf.gl_pathv[0])
++	continue;
++
++      strcpy(filename, globbuf.gl_pathv[0]);
++      if (is_regular_file (filename))
++      {
++        fd = open (filename, mode);
++        if (fd >= 0)
++          break;
++      }
++    }
++
++  if (filename_opened)
++    {
++      /* If a file was opened, canonicalize its filename. Use xfullpath
++         rather than gdb_realpath to avoid resolving the basename part
++         of filenames when the associated file is a symbolic link. This
++         fixes a potential inconsistency between the filenames known to
++         GDB and the filenames it prints in the annotations.  */
++      if (fd < 0)
++	*filename_opened = NULL;
++      else if (IS_ABSOLUTE_PATH (filename))
++	*filename_opened = xfullpath (filename);
++      else
++	{
++	  /* Beware the // my son, the Emacs barfs, the botch that catch... */
++
++	  char *f = concat (current_directory,
++           IS_DIR_SEPARATOR (current_directory[strlen (current_directory) - 1])
++				     ? "" : SLASH_STRING,
++				     filename, NULL);
++	  *filename_opened = xfullpath (f);
++	  xfree (f);
++	}
++    }
++
++  return fd;
++}
++
++
+ /*
+ 
+    GLOBAL FUNCTION
+@@ -193,6 +361,12 @@ solib_open (char *in_pathname, char **fo
+   if (found_file < 0 && solib_search_path != NULL)
+     found_file = openp (solib_search_path, OPF_TRY_CWD_FIRST,
+ 			in_pathname, O_RDONLY, 0, &temp_pathname);
++ 
++   /* If not found and debugging a kernel, try _ and - changes */
++   if (found_file < 0 && solib_search_path != NULL && debugkernel) {
++     found_file = module_openp(solib_search_path,
++ 			1, in_pathname, O_RDONLY, 0, &temp_pathname);
++   }
+   
+   /* If not found, next search the solib_search_path (if any) for the basename
+      only (ignoring the path).  This is to allow reading solibs from a path
+@@ -400,7 +574,7 @@ symbol_add_stub (void *arg)
+                                                     so->sections_end);
+ 
+   so->objfile = symbol_file_add (so->so_name, so->from_tty,
+-				 sap, 0, OBJF_SHARED);
++				 sap, 0, OBJF_SHARED | (debugkernel ? OBJF_READNOW : 0));
+   free_section_addr_info (sap);
+ 
+   return (1);
+Index: gdb-6.4/gdb/main.c
+===================================================================
+--- gdb-6.4.orig/gdb/main.c
++++ gdb-6.4/gdb/main.c
+@@ -64,6 +64,9 @@ int dbx_commands = 0;
+ /* System root path, used to find libraries etc.  */
+ char *gdb_sysroot = 0;
+ 
++/* Whether debugging a kernel */
++int debugkernel = 0;
++
+ struct ui_file *gdb_stdout;
+ struct ui_file *gdb_stderr;
+ struct ui_file *gdb_stdlog;
+Index: gdb-6.4/gdb/solib-svr4.c
+===================================================================
+--- gdb-6.4.orig/gdb/solib-svr4.c
++++ gdb-6.4/gdb/solib-svr4.c
+@@ -46,6 +46,7 @@
+ 
+ static struct link_map_offsets *svr4_fetch_link_map_offsets (void);
+ static int svr4_have_link_map_offsets (void);
++static struct so_list *kernel_current_sos (void);
+ 
+ /* This hook is set to a function that provides native link map
+    offsets if the code in solib-legacy.c is linked in.  */
+@@ -98,6 +99,7 @@ static char *bkpt_names[] =
+ #ifdef SOLIB_BKPT_NAME
+   SOLIB_BKPT_NAME,		/* Prefer configured name if it exists. */
+ #endif
++  "module_event",
+   "_start",
+   "__start",
+   "main",
+@@ -122,6 +124,58 @@ static char *main_name_list[] =
+ #define SOLIB_EXTRACT_ADDRESS(MEMBER) \
+ 	extract_unsigned_integer (&(MEMBER), sizeof (MEMBER))
+ 
++
++/* Kernel debugging structures */
++extern int debugkernel;
++
++struct list_head {
++  CORE_ADDR next;
++  CORE_ADDR prev;
++};
++
++#define MODULE_NAME_LEN (64 - sizeof(CORE_ADDR))
++
++#define MAX_SECTNAME 31
++
++struct mod_section {
++  CORE_ADDR address;
++  char name[MAX_SECTNAME + 1];
++};
++
++struct module
++{
++  CORE_ADDR unused_state;
++  struct list_head list;
++  char name[MODULE_NAME_LEN];
++
++  CORE_ADDR num_sections;
++  CORE_ADDR mod_sections;
++};
++
++struct mod_section_info {
++  CORE_ADDR address;
++  char name[MAX_SECTNAME + 1];
++};
++
++struct kern_lm_info {
++  int num_sects;
++  struct mod_section_info mod_section_info[1];
++};
++
++static char insmodsymprefix[] = "__insmod_";
++static char modnamesuffix[] = "_S";
++static char modsymsuffix[] = "_L";
++
++/* gdb structures */
++struct kmod_base {
++  char *name;
++  int num_sects;
++  CORE_ADDR sect_info_addr;
++  struct kmodbase *next;
++};
++
++#define OFFSET(structure, field) ((CORE_ADDR)(&((struct structure *)0)->field))
++
+ /* local data declarations */
+ 
+ /* link map access functions */
+@@ -586,6 +640,11 @@ svr4_current_sos (void)
+   struct so_list *head = 0;
+   struct so_list **link_ptr = &head;
+ 
++  if (debugkernel)
++    {
++      return kernel_current_sos();
++    }
++
+   /* Make sure we've looked up the inferior's dynamic linker's base
+      structure.  */
+   if (! debug_base)
+@@ -1200,6 +1259,11 @@ svr4_solib_create_inferior_hook (void)
+       return;
+     }
+ 
++  if (debugkernel)
++    {
++      solib_add (NULL, 0, NULL, 1);
++    }
++
+ #if defined(_SCO_DS)
+   /* SCO needs the loop below, other systems should be using the
+      special shared library breakpoints and the shared library breakpoint
+@@ -1266,8 +1330,30 @@ static void
+ svr4_relocate_section_addresses (struct so_list *so,
+                                  struct section_table *sec)
+ {
+-  sec->addr    = svr4_truncate_ptr (sec->addr    + LM_ADDR (so));
+-  sec->endaddr = svr4_truncate_ptr (sec->endaddr + LM_ADDR (so));
++  if (debugkernel)
++    {
++      int i;
++      struct kern_lm_info *kern_lm_info =
++	(struct kern_lm_info *)so->lm_info->lm;
++      for (i = 0; i < kern_lm_info->num_sects; i++)
++	{
++	  if (!strcmp(kern_lm_info->mod_section_info[i].name,
++	    sec->the_bfd_section->name))
++	    {
++	      CORE_ADDR sect_addr = extract_typed_address(
++	        &kern_lm_info->mod_section_info[i].address,
++	        builtin_type_void_data_ptr);
++	      sec->addr = sec->addr + sect_addr;
++	      sec->endaddr = sec->endaddr + sect_addr;
++	      break;
++            }
++	}
++    }
++  else
++    {
++      sec->addr    = svr4_truncate_ptr (sec->addr    + LM_ADDR (so));
++      sec->endaddr = svr4_truncate_ptr (sec->endaddr + LM_ADDR (so));
++    }
+ }
+ 
+ 
+@@ -1420,3 +1506,109 @@ _initialize_svr4_solib (void)
+   /* FIXME: Don't do this here.  *_gdbarch_init() should set so_ops. */
+   current_target_so_ops = &svr4_so_ops;
+ }
++
++/* Scans the list of modules in a kernel and finds out section addresses for
++ * those symbols */
++static struct so_list * kernel_current_sos (void)
++{
++  struct so_list *sol = NULL;
++  struct symbol *modules,*module_event;
++  CORE_ADDR modlistaddr;
++  CORE_ADDR modnameaddr;
++  struct so_list *head = 0;
++  struct so_list **link_ptr = &head;
++  CORE_ADDR modsymaddr;
++  CORE_ADDR symnameaddr;
++  char *symnameptr;
++  int modsymindex;
++  CORE_ADDR nomodsyms;
++  char *modsymsuffixptr;
++  struct kmod_base *kmod_basep;
++
++  /* Check whether Kernel module debugging is enabled
++   * add_modsects symbol is added to kernel only when kernel module debugging is enabled
++   */
++  module_event = lookup_symbol ("add_modsects", NULL, VAR_DOMAIN, NULL, NULL);
++  if (!module_event)
++    {
++      goto nolist;
++    }
++  /* Find the anchor */
++  
++  modules = lookup_symbol ("modules", NULL, VAR_DOMAIN, NULL, NULL);
++  if (!modules)
++    {
++      goto nolist;
++    }
++
++  /* Pointer to first module */
++  modlistaddr = read_memory_typed_address(SYMBOL_VALUE_ADDRESS(modules),
++			builtin_type_void_data_ptr);
++  while (modlistaddr != SYMBOL_VALUE_ADDRESS(modules))
++    {
++      struct so_list *new = (struct so_list *) xmalloc (sizeof (struct so_list));
++      struct cleanup *old_chain = make_cleanup (xfree, new);
++      CORE_ADDR mod_num_sections;
++      char *buffer;
++      int errcode;
++      CORE_ADDR mod_struct_addr;
++      CORE_ADDR mod_addr_sections;
++      struct kern_lm_info *kern_lm_info;
++
++      memset (new, 0, sizeof (*new));
++
++      mod_struct_addr = modlistaddr - OFFSET(module, list);
++
++      /* Read module name */
++      target_read_string(mod_struct_addr + OFFSET(module, name), &buffer,
++		      MODULE_NAME_LEN, &errcode);
++      if (errcode || !strlen(buffer))
++	{
++	  warning("Couldn't read module name");
++	  do_cleanups (old_chain);
++	  goto next_mod;
++	}
++      strncpy (new->so_name, buffer, SO_NAME_MAX_PATH_SIZE - 1);
++      new->so_name[SO_NAME_MAX_PATH_SIZE - 1] = '\0';
++      strcpy (new->so_original_name, new->so_name);
++      new->next = 0;
++
++      new->lm_info = xmalloc(sizeof (struct lm_info));
++      make_cleanup(xfree, new->lm_info);
++
++      mod_num_sections = read_memory_typed_address(mod_struct_addr +
++	      OFFSET(module, num_sections), builtin_type_void_data_ptr);
++      mod_addr_sections = read_memory_typed_address(mod_struct_addr +
++	      OFFSET(module, mod_sections), builtin_type_void_data_ptr);
++
++      new->lm_info->lm = xmalloc(sizeof (struct kern_lm_info) + sizeof
++		      (struct mod_section_info) * (mod_num_sections - 1));
++      make_cleanup(xfree, new->lm_info->lm);
++      kern_lm_info = (struct kern_lm_info *)new->lm_info->lm;
++      kern_lm_info->num_sects = mod_num_sections;
++      if (target_read_memory(mod_addr_sections,
++		      (char *)&kern_lm_info->mod_section_info[0],
++		      sizeof (struct mod_section_info) * mod_num_sections) != 0) {
++	  warning("Couldn't read module section map in module %s",
++			  new->so_name);
++	  do_cleanups (old_chain);
++	  goto next_mod;
++      }
++
++      *link_ptr = new;
++      link_ptr = &new->next;
++      if (strlen(new->so_name) <= SO_NAME_MAX_PATH_SIZE - 2)
++	{
++	  strcat(new->so_name, ".ko");
++	}
++      xfree(buffer);
++      discard_cleanups(old_chain);
++
++    next_mod:
++      modlistaddr = read_memory_typed_address(modlistaddr, builtin_type_void_data_ptr);
++    }
++  return head;
++
++nolist:
++  return NULL;
++}
+Index: gdb-6.4/gdb/symfile.c
+===================================================================
+--- gdb-6.4.orig/gdb/symfile.c
++++ gdb-6.4/gdb/symfile.c
+@@ -852,6 +852,10 @@ syms_from_objfile (struct objfile *objfi
+ void
+ new_symfile_objfile (struct objfile *objfile, int mainline, int verbo)
+ {
++  char *filename;
++  struct symbol *sym;
++  char *dir;
++  extern int debugkernel;
+ 
+   /* If this is the main symbol file we have to clean up all users of the
+      old main symbol file. Otherwise it is sufficient to fixup all the
+@@ -861,6 +865,17 @@ new_symfile_objfile (struct objfile *obj
+       /* OK, make it the "real" symbol file.  */
+       symfile_objfile = objfile;
+ 
++      debugkernel = 0;
++      filename = symfile_objfile->name;
++      while (dir = strchr(filename, '/'))
++        filename = dir + 1;
++      /* only require the given characters to match, so that longer filenames will still match */
++      if (!strncmp(filename, LINUX_KERNEL_NAME_STEM, strlen(LINUX_KERNEL_NAME_STEM)))
++        {
++          sym = lookup_symbol ("start_kernel", NULL, VAR_DOMAIN, NULL, NULL);
++          if (sym)
++	    debugkernel = 1;
++        }
+       clear_symtab_users ();
+     }
+   else
+Index: gdb-6.4/gdb/defs.h
+===================================================================
+--- gdb-6.4.orig/gdb/defs.h
++++ gdb-6.4/gdb/defs.h
+@@ -1216,5 +1216,6 @@ extern int use_windows;
+ 
+ extern ULONGEST align_up (ULONGEST v, int n);
+ extern ULONGEST align_down (ULONGEST v, int n);
++#define LINUX_KERNEL_NAME_STEM "vmlinux"
+ 
+ #endif /* #ifndef DEFS_H */

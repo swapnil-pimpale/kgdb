@@ -1,0 +1,367 @@
+Index: gdb-6.4/gdb/i386-cygwin-tdep.c
+===================================================================
+--- gdb-6.4.orig/gdb/i386-cygwin-tdep.c	2004-11-01 01:54:32.000000000 +0530
++++ gdb-6.4/gdb/i386-cygwin-tdep.c	2005-12-29 16:42:42.000000000 +0530
+@@ -25,6 +25,8 @@
+ #include "gdb_string.h"
+ 
+ #include "i386-tdep.h"
++#include "arch-utils.h"
++#include "gdbarch.h"
+ 
+ static CORE_ADDR
+ i386_cygwin_skip_trampoline_code (CORE_ADDR pc)
+@@ -39,6 +41,9 @@
+ 
+   set_gdbarch_skip_trampoline_code (gdbarch, i386_cygwin_skip_trampoline_code);
+ 
++  /* Stack grows downward.  */
++  set_gdbarch_inner_than (gdbarch, core_addr_lessthan);
++
+   tdep->struct_return = reg_struct_return;
+ }
+ 
+Index: gdb-6.4/gdb/i386-linux-tdep.c
+===================================================================
+--- gdb-6.4.orig/gdb/i386-linux-tdep.c	2005-12-29 16:05:35.000000000 +0530
++++ gdb-6.4/gdb/i386-linux-tdep.c	2005-12-29 17:30:12.000000000 +0530
+@@ -39,6 +39,8 @@
+ #include "solib-svr4.h"
+ #include "linux-tdep.h"
+ #include "frame-unwind.h"
++#include "arch-utils.h"
++#include "gdbarch.h"
+ 
+ /* Return the name of register REG.  */
+ 
+@@ -407,6 +409,40 @@
+   0 * 4				/* %gs */
+ };
+ 
++static int
++i386_inner_than (CORE_ADDR lhsf, CORE_ADDR rhsf, CORE_ADDR lhsc,
++		    CORE_ADDR rhsc)
++{
++  /* Read code at rhsc, if it contains a stack switch instruction, return
++   * true. We check for 4 instructions.
++   * 89C4	mov eax, esp
++   * 89DC	mov ebx, esp
++   * 89CC	mov ecx, esp
++   * 89D4	mov edx, esp
++   * 94		xchg eax, esp
++   * 87DC	xchg ebx, esp
++   * 87CC	xchg ecx, esp
++   * 87D4	xchg edx, esp
++   */
++  unsigned short twobyte_insns[] = { 0x89c4, 0x89dc, 0x89cc, 0x89d4, 0x87dc,
++	  0x87dc, 0x87cc, 0x87d4 };
++  unsigned char onebyte_insns[] = { 0x94 };
++  unsigned short tmp;
++  int i;
++
++  if (rhsc &&
++      target_read_memory(rhsc, (gdb_byte *)&tmp, sizeof(unsigned short)) == 0)
++    {
++      for (i = 0; i < sizeof(onebyte_insns); i++)
++	if (onebyte_insns[i] == (unsigned char)tmp)
++	  return 0;
++      for (i = 0; i < sizeof(twobyte_insns); i++)
++	if (twobyte_insns[i] == tmp)
++	  return 0;
++    }
++  return core_addr_lessthan(lhsf, rhsf, lhsc, rhsc);
++}
++
+ static void
+ i386_linux_init_abi (struct gdbarch_info info, struct gdbarch *gdbarch)
+ {
+@@ -446,6 +482,9 @@
+   /* Enable TLS support.  */
+   set_gdbarch_fetch_tls_load_module_address (gdbarch,
+                                              svr4_fetch_objfile_link_map);
++
++  /* Stack grows downward.  */
++  set_gdbarch_inner_than (gdbarch, i386_inner_than);
+ }
+ 
+ static void
+@@ -472,6 +511,9 @@
+   unwind_data->pcshift = 2;
+   unwind_data->spshift = 8;
+   frame_unwind_prepend_unwinder (gdbarch, &linux_context_frame_unwinder);
++
++  /* Stack grows downward.  */
++  set_gdbarch_inner_than (gdbarch, i386_inner_than);
+ }
+ 
+ /* Provide a prototype to silence -Wmissing-prototypes.  */
+@@ -484,4 +526,5 @@
+ 			  i386_linux_init_abi);
+   gdbarch_register_osabi (bfd_arch_i386, 0, GDB_OSABI_LINUX_KERNEL,
+ 			  i386_linux_kernel_init_abi);
++
+ }
+Index: gdb-6.4/gdb/i386-nto-tdep.c
+===================================================================
+--- gdb-6.4.orig/gdb/i386-nto-tdep.c	2005-08-12 22:58:51.000000000 +0530
++++ gdb-6.4/gdb/i386-nto-tdep.c	2005-12-29 16:42:45.000000000 +0530
+@@ -34,6 +34,8 @@
+ #include "i387-tdep.h"
+ #include "nto-tdep.h"
+ #include "solib-svr4.h"
++#include "arch-utils.h"
++#include "gdbarch.h"
+ 
+ /* Target vector for QNX NTO x86.  */
+ static struct nto_target_ops i386_nto_target;
+@@ -287,6 +289,9 @@
+   TARGET_SO_IN_DYNSYM_RESOLVE_CODE = nto_in_dynsym_resolve_code;
+ 
+   nto_set_target (&i386_nto_target);
++
++  /* Stack grows downward.  */
++  set_gdbarch_inner_than (gdbarch, core_addr_lessthan);
+ }
+ 
+ void
+Index: gdb-6.4/gdb/i386-sol2-tdep.c
+===================================================================
+--- gdb-6.4.orig/gdb/i386-sol2-tdep.c	2004-04-10 04:45:53.000000000 +0530
++++ gdb-6.4/gdb/i386-sol2-tdep.c	2005-12-29 16:42:48.000000000 +0530
+@@ -27,6 +27,8 @@
+ 
+ #include "i386-tdep.h"
+ #include "solib-svr4.h"
++#include "arch-utils.h"
++#include "gdbarch.h"
+ 
+ /* From <ia32/sys/reg.h>.  */
+ static int i386_sol2_gregset_reg_offset[] =
+@@ -103,6 +105,10 @@
+ 
+   set_solib_svr4_fetch_link_map_offsets
+     (gdbarch, svr4_ilp32_fetch_link_map_offsets);
++
++  /* Stack grows downward.  */
++  set_gdbarch_inner_than (gdbarch, core_addr_lessthan);
++
+ }
+ 
+ 
+Index: gdb-6.4/gdb/i386-tdep.c
+===================================================================
+--- gdb-6.4.orig/gdb/i386-tdep.c	2005-10-10 06:38:07.000000000 +0530
++++ gdb-6.4/gdb/i386-tdep.c	2005-12-29 16:09:49.000000000 +0530
+@@ -2296,9 +2296,6 @@
+ 
+   set_gdbarch_skip_prologue (gdbarch, i386_skip_prologue);
+ 
+-  /* Stack grows downward.  */
+-  set_gdbarch_inner_than (gdbarch, core_addr_lessthan);
+-
+   set_gdbarch_breakpoint_from_pc (gdbarch, i386_breakpoint_from_pc);
+   set_gdbarch_decr_pc_after_break (gdbarch, 1);
+ 
+Index: gdb-6.4/gdb/gdbarch.h
+===================================================================
+--- gdb-6.4.orig/gdb/gdbarch.h	2005-09-03 00:32:46.000000000 +0530
++++ gdb-6.4/gdb/gdbarch.h	2005-12-29 16:20:58.000000000 +0530
+@@ -873,14 +873,16 @@
+ #define SKIP_PROLOGUE(ip) (gdbarch_skip_prologue (current_gdbarch, ip))
+ #endif
+ 
+-typedef int (gdbarch_inner_than_ftype) (CORE_ADDR lhs, CORE_ADDR rhs);
+-extern int gdbarch_inner_than (struct gdbarch *gdbarch, CORE_ADDR lhs, CORE_ADDR rhs);
++typedef int (gdbarch_inner_than_ftype) (CORE_ADDR lhsf, CORE_ADDR rhsf,
++					CORE_ADDR lhsc, CORE_ADDR rhsc);
++extern int gdbarch_inner_than (struct gdbarch *gdbarch, CORE_ADDR lhsf,
++			       CORE_ADDR rhsf, CORE_ADDR lhsc, CORE_ADDR rhsc);
+ extern void set_gdbarch_inner_than (struct gdbarch *gdbarch, gdbarch_inner_than_ftype *inner_than);
+ #if !defined (GDB_TM_FILE) && defined (INNER_THAN)
+ #error "Non multi-arch definition of INNER_THAN"
+ #endif
+ #if !defined (INNER_THAN)
+-#define INNER_THAN(lhs, rhs) (gdbarch_inner_than (current_gdbarch, lhs, rhs))
++#define INNER_THAN(lhsf, rhsf, lhsc, rhsc) (gdbarch_inner_than (current_gdbarch, lhsf, rhsf, lhsc, rhsc))
+ #endif
+ 
+ typedef const gdb_byte * (gdbarch_breakpoint_from_pc_ftype) (CORE_ADDR *pcptr, int *lenptr);
+Index: gdb-6.4/gdb/arch-utils.h
+===================================================================
+--- gdb-6.4.orig/gdb/arch-utils.h	2005-05-14 11:37:41.000000000 +0530
++++ gdb-6.4/gdb/arch-utils.h	2005-12-29 16:22:05.000000000 +0530
+@@ -56,7 +56,8 @@
+ extern gdbarch_remote_translate_xfer_address_ftype generic_remote_translate_xfer_address;
+ 
+ /* The only possible cases for inner_than. */
+-extern int core_addr_lessthan (CORE_ADDR lhs, CORE_ADDR rhs);
++extern int core_addr_lessthan (CORE_ADDR lhsf, CORE_ADDR rhsf,
++		CORE_ADDR lhsc, CORE_ADDR rhsc);
+ extern int core_addr_greaterthan (CORE_ADDR lhs, CORE_ADDR rhs);
+ 
+ /* Floating point values. */
+Index: gdb-6.4/gdb/arch-utils.c
+===================================================================
+--- gdb-6.4.orig/gdb/arch-utils.c	2005-07-12 17:41:44.000000000 +0530
++++ gdb-6.4/gdb/arch-utils.c	2005-12-29 16:22:40.000000000 +0530
+@@ -154,9 +154,10 @@
+ /* Helper functions for INNER_THAN */
+ 
+ int
+-core_addr_lessthan (CORE_ADDR lhs, CORE_ADDR rhs)
++core_addr_lessthan (CORE_ADDR lhsf, CORE_ADDR rhsf, CORE_ADDR lhsc,
++		    CORE_ADDR rhsc)
+ {
+-  return (lhs < rhs);
++  return (lhsf < rhsf);
+ }
+ 
+ int
+Index: gdb-6.4/gdb/frame.c
+===================================================================
+--- gdb-6.4.orig/gdb/frame.c	2005-05-29 04:21:37.000000000 +0530
++++ gdb-6.4/gdb/frame.c	2005-12-29 16:24:30.000000000 +0530
+@@ -378,7 +378,8 @@
+        comment in "frame.h", there is some fuzz here.  Frameless
+        functions are not strictly inner than (same .stack but
+        different .code and/or .special address).  */
+-    inner = INNER_THAN (l.stack_addr, r.stack_addr);
++    inner = INNER_THAN (l.stack_addr, r.stack_addr, l.code_addr,
++		        r.code_addr);
+   if (frame_debug)
+     {
+       fprintf_unfiltered (gdb_stdlog, "{ frame_id_inner (l=");
+Index: gdb-6.4/gdb/gcore.c
+===================================================================
+--- gdb-6.4.orig/gdb/gcore.c	2005-02-15 21:19:10.000000000 +0530
++++ gdb-6.4/gdb/gcore.c	2005-12-29 16:49:31.000000000 +0530
+@@ -181,7 +181,7 @@
+   /* Save frame pointer of TOS frame.  */
+   *top = get_frame_base (fi);
+   /* If current stack pointer is more "inner", use that instead.  */
+-  if (INNER_THAN (read_sp (), *top))
++  if (INNER_THAN (read_sp (), *top, NULL, NULL))
+     *top = read_sp ();
+ 
+   /* Find prev-most frame.  */
+Index: gdb-6.4/gdb/infcall.c
+===================================================================
+--- gdb-6.4.orig/gdb/infcall.c	2005-12-29 16:51:34.000000000 +0530
++++ gdb-6.4/gdb/infcall.c	2005-12-29 16:55:00.000000000 +0530
+@@ -254,7 +254,7 @@
+   sp = gdbarch_frame_align (gdbarch, sp);
+   /* Allocate space for, and then position the breakpoint on the
+      stack.  */
+-  if (gdbarch_inner_than (gdbarch, 1, 2))
++  if (gdbarch_inner_than (gdbarch, 1, 2, 0, 0))
+     {
+       CORE_ADDR bppc = sp;
+       gdbarch_breakpoint_from_pc (gdbarch, &bppc, &bplen);
+@@ -367,7 +367,7 @@
+ 	   address.  AMD64 called that region the "red zone".  Skip at
+ 	   least the "red zone" size before allocating any space on
+ 	   the stack.  */
+-	if (INNER_THAN (1, 2))
++	if (INNER_THAN (1, 2, 0, 0))
+ 	  sp -= gdbarch_frame_red_zone_size (current_gdbarch);
+ 	else
+ 	  sp += gdbarch_frame_red_zone_size (current_gdbarch);
+@@ -395,15 +395,15 @@
+ 	   to pay :-).  */
+ 	if (sp == old_sp)
+ 	  {
+-	    if (INNER_THAN (1, 2))
++	    if (INNER_THAN (1, 2, 0, 0))
+ 	      /* Stack grows down.  */
+ 	      sp = gdbarch_frame_align (current_gdbarch, old_sp - 1);
+ 	    else
+ 	      /* Stack grows up.  */
+ 	      sp = gdbarch_frame_align (current_gdbarch, old_sp + 1);
+ 	  }
+-	gdb_assert ((INNER_THAN (1, 2) && sp <= old_sp)
+-		    || (INNER_THAN (2, 1) && sp >= old_sp));
++	gdb_assert ((INNER_THAN (1, 2, 0, 0) && sp <= old_sp)
++		    || (INNER_THAN (2, 1, 0, 0) && sp >= old_sp));
+       }
+     else
+       /* FIXME: cagney/2002-09-18: Hey, you loose!
+@@ -449,7 +449,7 @@
+     case ON_STACK:
+       /* "dummy_addr" is here just to keep old targets happy.  New
+ 	 targets return that same information via "sp" and "bp_addr".  */
+-      if (INNER_THAN (1, 2))
++      if (INNER_THAN (1, 2, 0, 0))
+ 	{
+ 	  sp = push_dummy_code (current_gdbarch, sp, funaddr,
+ 				using_gcc, args, nargs, values_type,
+@@ -596,7 +596,7 @@
+ 	      len = TYPE_LENGTH (arg_type);
+ 
+ 	      aligned_len = len;
+-	      if (INNER_THAN (1, 2))
++	      if (INNER_THAN (1, 2, 0, 0))
+ 		{
+ 		  /* stack grows downward */
+ 		  sp -= aligned_len;
+@@ -631,7 +631,7 @@
+   if (struct_return)
+     {
+       int len = TYPE_LENGTH (values_type);
+-      if (INNER_THAN (1, 2))
++      if (INNER_THAN (1, 2, 0, 0))
+ 	{
+ 	  /* Stack grows downward.  Align STRUCT_ADDR and SP after
+              making space for the return value.  */
+Index: gdb-6.4/gdb/ada-lang.c
+===================================================================
+--- gdb-6.4.orig/gdb/ada-lang.c	2005-10-04 02:51:20.000000000 +0530
++++ gdb-6.4/gdb/ada-lang.c	2005-12-29 16:54:33.000000000 +0530
+@@ -3493,7 +3493,7 @@
+       /* The following is taken from the structure-return code in
+ 	 call_function_by_hand. FIXME: Therefore, some refactoring seems 
+ 	 indicated. */
+-      if (INNER_THAN (1, 2))
++      if (INNER_THAN (1, 2, 0, 0))
+ 	{
+ 	  /* Stack grows downward.  Align SP and VALUE_ADDRESS (val) after
+ 	     reserving sufficient space. */
+Index: gdb-6.4/gdb/gdbarch.c
+===================================================================
+--- gdb-6.4.orig/gdb/gdbarch.c	2005-09-03 00:32:45.000000000 +0530
++++ gdb-6.4/gdb/gdbarch.c	2005-12-29 17:08:12.000000000 +0530
+@@ -572,8 +572,7 @@
+   /* Skip verify of deprecated_extract_struct_value_address, has predicate */
+   if (current_gdbarch->skip_prologue == 0)
+     fprintf_unfiltered (log, "\n\tskip_prologue");
+-  if (current_gdbarch->inner_than == 0)
+-    fprintf_unfiltered (log, "\n\tinner_than");
++  /* Skip verify of inner_than */
+   if (current_gdbarch->breakpoint_from_pc == 0)
+     fprintf_unfiltered (log, "\n\tbreakpoint_from_pc");
+   /* Skip verify of adjust_breakpoint_address, has predicate */
+@@ -1196,7 +1195,7 @@
+   fprintf_unfiltered (file,
+                       "gdbarch_dump: %s # %s\n",
+                       "INNER_THAN(lhs, rhs)",
+-                      XSTRING (INNER_THAN (lhs, rhs)));
++                      XSTRING (INNER_THAN (lhs, rhs, 0, 0)));
+ #endif
+   fprintf_unfiltered (file,
+                       "gdbarch_dump: inner_than = <0x%lx>\n",
+@@ -2876,13 +2875,14 @@
+ }
+ 
+ int
+-gdbarch_inner_than (struct gdbarch *gdbarch, CORE_ADDR lhs, CORE_ADDR rhs)
++gdbarch_inner_than (struct gdbarch *gdbarch, CORE_ADDR lhsf, CORE_ADDR rhsf,
++		CORE_ADDR lhsc, CORE_ADDR rhsc)
+ {
+   gdb_assert (gdbarch != NULL);
+   gdb_assert (gdbarch->inner_than != NULL);
+   if (gdbarch_debug >= 2)
+     fprintf_unfiltered (gdb_stdlog, "gdbarch_inner_than called\n");
+-  return gdbarch->inner_than (lhs, rhs);
++  return gdbarch->inner_than (lhsf, rhsf, lhsc, rhsc);
+ }
+ 
+ void

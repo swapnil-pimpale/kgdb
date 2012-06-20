@@ -1,0 +1,60 @@
+2007-07-05 Tim Barbour <trb@phasechangeit.com>
+	* Fix which makes it possible using "vmlinux-<version>" name
+	for the kernel instead of strict "vmlinux" which was the case earlier. The fix
+	does a partial match (with "vmlinux") instead of full match to make it possible.
+
+2006-01-18 Jitendra Pawar <jitendra@linsyssoft.com>
+	* Added hw_watchpt_pointer_initialization.patch.
+	* In case of remote debugging *current_target.to_insert_watchpoint points
+	to remote_target_insert_watchpoint function, but while native debugging
+	it should points to <host_arch>_insert_watchpoint (e.g.
+	i386_insert_watchpoint) instead it points to return_minus_one function.
+	* This patch removes declaration of macros in file 
+	gdb/config/i386/nm-i386.h for insertion and removal of h/w watchpoints. 
+	Instead it initializes register access methods in  gdb/i386-linux-nat.c file.
+	It fixes above problem.
+
+2006-01-11 Jitendra Pawar <jitendra@linsyssoft.com>
+	* Removed context.patch
+
+2005-12-30 Amit S. Kale <amitkale@linsyssoft.com>
+	* Added stackswitch.patch to make gdb understand stack switches and
+	not print stack corrupt errors in valid kernel stacks.
+
+2005-12-28 Jitendra Pawar <jitendra@linsyssoft.com>
+	* Rebased lk.patch to gdb-6.4
+	* Rebased context.patch to gdb-6.4 
+	* Fixed compilation errors in gdb/stack.c
+
+2004-11-05 Amit S. Kale <amitkale@linsyssoft.com>
+	* Fixed compilation errors and did minor cosmetic changes.
+	* Added support for x86_64 to lk.patch and context.patch
+
+2004-10-26 Amit S. Kale <amitkale@linsyssoft.com>
+	* Prefixed all functions, statics and globals in linux_tdep.c with a
+	linux_
+	* Fixed false detection of a context frame. Detect a context frame by
+	checking whether pc lies between __switch_to_begin and
+	__switch_to_end.
+	* Fixed variance of the frame_id of a context frame. Make pc in
+	frame_id of a context frame equal to __switch_to_begin. Make the pc of
+	the frame previous to a context frame equal to __switch_to_end. sp is
+	still approvimate, but should work for info_threads listing.
+	* Changed the code to use an osabi Linux-kernel instead of a target
+	i386-lk as per suggestion from gdb gurus. x86_64 support is removed as
+	a result of this change.
+
+2004-10-01 Amit S. Kale <amitkale@linsyssoft.com>
+	* Added precise calculation of pc and sp for the frame previous to
+	a context frame. Introduced two architeture specific fields that
+	specify this pc and sp displacement.
+
+2004-09-30 Amit S. Kale <amitkale@linsyssoft.com>
+	* Rebased to gdb 6.2
+	* Added context frames feature. This feature suppresses context switch
+	related frames in the output of info threads. It also presents precise
+	back traces starting from switch_to. switch_to assembly code is
+	represented by a context frame so that gdb doesn't try to parse it.
+
+2004-09-20 Amit S. Kale <amitkale@linsyssoft.com>
+	* Initial checkin of kgdb support for gdb.

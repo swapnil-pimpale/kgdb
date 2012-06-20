@@ -1,0 +1,5 @@
+# Patchdir: gdb-6.4
+# Source: gdb-6.4.tar.bz2
+lk.patch 
+stackswitch.patch
+hw_watchpt_pointer_initialization.patch

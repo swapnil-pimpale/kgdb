@@ -1,0 +1,66 @@
+Copyright 2004 LinSysSoft Technologies Pvt. Ltd.
+
+There are three patches present in this directory. 
+Work on these patches(lk.patch and context.patch) are still going on. 
+for now one can use gdb-kgdb-module-notification.patch. 
+
+1. Applying patches
+Base GDB version: 6.4
+
+You can use quilt for quick,efficent and reversible application of patches. 
+Quilt uses a series file which has the order in which the patches have to be 
+applied. Then quilt push and pop commands can be used for applying and removing 
+the patches respectively. Keep only those patchfile names in series file which u
+want to apply. Quilt can be downloaded from : 
+http://savannah.nongnu.org/projects/quilt
+If you do not want use quilt, then while applying the patches follow the 
+order given in 'series' file.
+
+2. Building gdb
+Compile the gdb with a configure followed by a make.
+
+3. Using gdb
+Supply vmlinux to gdb on command line and specify osabi to be "Linux-kernel"
+_before_ "target remote" command.
+
+Example:
+
+[amitkale@pythagoras gdb-build]$ gdb/gdb  ~/build/2.6.9-rc2-i386/vmlinux
+GNU gdb 6.4
+Copyright 2004 Free Software Foundation, Inc.
+GDB is free software, covered by the GNU General Public License, and you are
+welcome to change it and/or distribute copies of it under certain conditions.
+Type "show copying" to see the conditions.
+There is absolutely no warranty for GDB.  Type "show warranty" for details.
+This GDB was configured as "i686-pc-linux-gnu"...Using host libthread_db library "/lib/tls/libthread_db.so.1".
+
+(gdb) set osabi Linux-kernel
+(gdb) tar re /dev/ttyS0
+Remote debugging using /dev/ttyS0
+breakpoint () at /home/amitkale/work/linux-2.6.9-rc2/kernel/kgdb.c:1285
+1285            atomic_set(&kgdb_setting_breakpoint, 0);
+warning: no shared library support for this OS / ABI
+(gdb) bt
+#0  breakpoint () at /home/amitkale/work/linux-2.6.9-rc2/kernel/kgdb.c:1285
+#1  0xc01080a7 in do_IRQ (regs=
+      {ebx = 2, ecx = 0, edx = 0, esi = 70, edi = -1068545344, ebp = -1068515336, eax = 0, xds = 123, xes = 123, orig_eax = -252, eip = -1072545075, xcs = 96, eflags = 598, esp = -1068766072, xss = 0})
+    at /home/amitkale/work/linux-2.6.9-rc2/arch/i386/kernel/irq.c:575
+#2  0xc0105c78 in common_interrupt () at atomic.h:169
+#3  0x00000002 in ?? ()
+#4  0x00000000 in ?? ()
+#5  0x00000000 in ?? ()
+#6  0x00000046 in ?? ()
+#7  0xc04f4ac0 in per_cpu__rcu_data ()
+#8  0xc04fbff8 in softirq_stack ()
+#9  0x00000000 in ?? ()
+#10 0x0000007b in ?? ()
+#11 0x0000007b in ?? ()
+#12 0xffffff04 in ?? ()
+#13 0xc01242cd in __do_softirq ()
+    at /home/amitkale/work/linux-2.6.9-rc2/kernel/softirq.c:93
+#14 0xc01089af in do_softirq ()
+    at /home/amitkale/work/linux-2.6.9-rc2/arch/i386/kernel/irq.c:1147
+Previous frame inner to this frame (corrupt stack?)
+(gdb) c
+Continuing.
+

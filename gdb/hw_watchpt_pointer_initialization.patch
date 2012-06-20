@@ -1,0 +1,28 @@
+--- src.orig/gdb/i386-linux-nat.c	2005-09-10 23:41:02.000000000 +0530
++++ src/gdb/i386-linux-nat.c	2006-01-16 19:31:29.000000000 +0530
+@@ -842,6 +842,8 @@
+   /* Add our register access methods.  */
+   t->to_fetch_registers = i386_linux_fetch_inferior_registers;
+   t->to_store_registers = i386_linux_store_inferior_registers;
++  t->to_insert_watchpoint = i386_insert_watchpoint;
++  t->to_remove_watchpoint = i386_remove_watchpoint;
+ 
+   /* Register the target.  */
+   add_target (t);
+--- src.orig/gdb/config/i386/nm-i386.h	2004-10-08 23:00:48.000000000 +0530
++++ src/gdb/config/i386/nm-i386.h	2006-01-17 12:31:37.299432944 +0530
+@@ -97,14 +97,6 @@
+ 
+ #define target_stopped_data_address(target, x)  i386_stopped_data_address(x)
+ 
+-/* Use these macros for watchpoint insertion/removal.  */
+-
+-#define target_insert_watchpoint(addr, len, type) \
+-  i386_insert_watchpoint (addr, len, type)
+-
+-#define target_remove_watchpoint(addr, len, type) \
+-  i386_remove_watchpoint (addr, len, type)
+-
+ #define target_insert_hw_breakpoint(addr, shadow) \
+   i386_insert_hw_breakpoint (addr, shadow)
+ 
