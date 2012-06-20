@@ -1,0 +1,348 @@
+Brief usage notes on the gdb stub for Linux/s390 running under VM (ver 0.2.0)
+-----------------------------------------------------------------------------
+
+What is this?
+-------------
+
+It's an attempt at providing kernel source level debugging facilities
+for Linux running on the s390 platform under VM. It provides functionality
+similar to kgdb for x86. However, it does not require any additional
+patches to the kernel.
+
+A			B		     C
+	TCP/IP
+VM <------------------> x3270
+^			  ^
+|			  |
+v			  v	     TCP/IP
+Linux			gdbstub.pl <--------> gdb
+
+x3270 connects to the s390 VM and presents a console interface
+to the Linux guest machine. gdbstub.pl talks to VM via x3270 and
+uses VM's debugging commands (like cp trace, cp dispay etc.) to implement
+the gdb remote protocol. VM debugging commands can be used to extract
+and modify the state of the Linux guest without having to change the
+Linux kernel in any way.
+
+B and C are usually the same machine.
+
+It ONLY works for the 31-bit s390 platform. Every other line of code makes
+nasty assumptions of 32-bitness, so don't even think of running this on the
+64-bit s390x platform. That would require a complete rewrite.
+
+Requirements:
+------------
+
+Target:
+o	Linux/s390 running under VM.
+
+Host:
+
+o	x86 or s390 machine running Linux
+o	gdb-5.2 (either native or cross-hosted on x86) with the patch
+	appended below.
+o	x3270 (I use 3.2.16). It may be possible to use the text-based
+	3270 client, c3270, instead of x3270. The use of script-only
+	clients is not advisable, since manual intervention is occasionally
+	required.
+o	The stub itself, which consists of 3 perl files - gdbstub.pl,
+	cpinter.pl and cpstrings.pl
+	The latest copy of the stub can be found in the cvs tree at
+	http://sourceforge.net/projects/kgdb
+
+Basic Usage:
+------------
+
+(cross)Compile the kernel you want with -g -O2. Copy it to your target
+machine and boot with it. The host needs a copy of vmlinux with all
+debugging info intact.
+
+You can't simply use a plain -O2 kernel from a standard kernel rpm
+on the target and a -g -O2 kernel on the host. Addresses turn out slightly
+different when you use -g. A pity, since this would have been quite useful
+for debugging production servers running standard distribution kernels.
+
+Edit the cpstrings.pl file to match the output of your VM configuration.
+
+In the directory where you've unpacked the stub, create two fifos:
+
+mkfifo ip op
+
+Run the command:
+
+sleep 1000000 >ip <op &
+
+to keep x3270 happy.
+
+Start x3270 as follows:
+
+x3270 -script -port blah hostname <ip >op
+
+Note that the console should be at least 80x25 in size.
+Now logon manually to your virtual machine and boot up on the kernel
+you compiled with -g.
+
+Run the stub as follows:
+
+perl -w ./gdbstub.pl >ip <op
+
+If all goes well, it should force the target into CP and issue the
+command
+set run off
+
+You should be able to observe this on the console. Once this is done,
+start gdb.
+
+s390-ibm-linux-gdb /path/to/vmlinux
+
+set remotetimeout 20	# I need this because I need to debug a target
+			# over the net. you can add this to .gdbinit
+
+set trust-readonly-sections 1	# this is useful to avoid unnecessary
+				# traffic. gdb will look at vmlinux for
+				# contents of .text instead of reading
+				# from target memory.
+target remote stubhost:5513
+
+where stubhost is where you're running gdbstub.pl (usually localhost)
+You should get something like:
+
+[ganesh@blin1 linux-2.4.9-37]$ s390-ibm-linux-gdb vmlinux 
+GNU gdb 5.2
+Copyright 2002 Free Software Foundation, Inc.
+GDB is free software, covered by the GNU General Public License, and you are
+welcome to change it and/or distribute copies of it under certain conditions.
+Type "show copying" to see the conditions.
+There is absolutely no warranty for GDB.  Type "show warranty" for details.
+This GDB was configured as "--host=i386-pc-linux-gnu --target=s390-ibm-linux"...
+(gdb) set remotetimeout 20
+(gdb) ta re linux-3:5513
+Remote debugging using linux-3:5513
+cpu_idle (unused=0x0) at process.c:76
+76      }
+warning: shared library handler failed to enable breakpoint
+(gdb) 
+
+At this point you can set breakpoints, examine memory, registers, view
+backtraces etc.
+
+Thread Debugging:
+----------------
+
+You can now also view all the threads (tasks) running on the system. You
+can switch to a particular thread and do a backtrace. This may be useful
+in debugging deadlocks etc.
+
+There are two ways to do it. You might find one or the other easier
+depending on your particular situation.
+
+Way 1:
+------
+Helper Module: The first way requires you to compile a helper module
+called gdbmod and load it on the target machine. You can do this any time,
+even after the stub and gdb have been started, but you must do it before
+issuing the first "info threads" command.
+
+The file gdbmod.c can be compiled after editing the sample Makefile to
+change things like path to the kernel source, cross compilation, etc.
+
+[ganesh@blin1 gdbmod]$ make
+s390-ibm-linux-gcc -D__KERNEL__ -I/home/ganesh/work/usr/src/linux-2.4.9-37/include -Wall -Wstrict-prototypes -Wno-trigraphs -O2 -fno-omit-frame-pointer -fno-strict-aliasing -fno-common -Wno-unused -pipe -fno-strength-reduce -DMODULE -DEXPORT_SYMTAB -c gdbmod.c
+[ganesh@blin1 gdbmod]$ 
+
+Now copy it to the target machine.
+
+[ganesh@blin1 gdbstub]$ scp -C gdbmod.o root@target:
+gdbmod.o             100% |***************************************************|   106 KB    00:02    
+[ganesh@blin1 gdbstub]$ 
+
+Load the module:
+
+[ganesh@blin1 gdbstub]$ ssh root@target "/sbin/insmod /root/gdbmod.o;/sbin/lsmod"
+Module                  Size  Used by
+gdbmod                107616   0  (unused)
+netiucv                18096   1  (autoclean)
+af_packet              16560   0  (autoclean)
+[ganesh@blin1 gdbstub]$ 
+
+Grab a copy of the target's /proc/ksyms and dump it in the directory where the
+perl stub resides:
+
+[ganesh@blin1 gdbstub]$ ssh root@target cat /proc/ksyms >ksyms
+[ganesh@blin1 gdbstub]$ 
+
+Now you can do an "info threads" from gdb and you should get (after about half
+a minute if the target is across the net) a list of threads running on the
+target. Use the "thread" and the "bt" commands to switch to threads and
+backtrace. Setting variables/registers in the context of a thread is not
+supported. Look but don't touch.
+
+[ganesh@blin1 gdb]$ ~/work/gdb-build/gdb/gdb 
+GNU gdb 5.2
+[.....]
+(gdb) ta re localhost:5513
+cpu_idle (unused=0x0) at process.c:76
+76      }
+warning: shared library handler failed to enable breakpoint
+(gdb) info threads
+  22 Thread 575 (mingetty)  schedule_timeout (timeout=2147483647) at sched.c:425
+  21 Thread 568 (xfs)  schedule_timeout (timeout=282645) at sched.c:453
+  20 Thread 516 (crond)  schedule_timeout (timeout=231187) at sched.c:453
+  19 Thread 497 (xinetd)  schedule_timeout (timeout=2147483647) at sched.c:425
+  18 Thread 464 (sshd)  schedule_timeout (timeout=2147483647) at sched.c:425
+  17 Thread 427 (klogd)  0x0001f8d4 in do_syslog (type=0, buf=0x406b38 "", len=4095) at printk.c:178
+  16 Thread 422 (syslogd)  schedule_timeout (timeout=2147483647) at sched.c:425
+  15 Thread 110 (kjournald)  interruptible_sleep_on (q=0xc6d468) at sched.c:838
+  14 Thread 109 (kjournald)  interruptible_sleep_on (q=0xc6d668) at sched.c:838
+  13 Thread 108 (kjournald)  interruptible_sleep_on (q=0xc6d268) at sched.c:838
+  12 Thread 107 (kjournald)  interruptible_sleep_on (q=0xc6d068) at sched.c:838
+  11 Thread 106 (kjournald)  interruptible_sleep_on (q=0xf6a868) at sched.c:838
+  10 Thread 10 (mdrecoveryd)  md_thread (arg=0x0) at md.c:3010
+  9 Thread 9 (kupdated)  schedule_timeout (timeout=228645) at sched.c:453
+  8 Thread 8 (bdflush)  interruptible_sleep_on (q=0x200c30) at sched.c:838
+  7 Thread 7 (kreclaimd)  interruptible_sleep_on (q=0x1f9a0c) at sched.c:838
+  6 Thread 6 (kswapd)  schedule_timeout (timeout=228682) at sched.c:453
+  5 Thread 5 (ksoftirqd_CPU1)  ksoftirqd (__bind_cpu=0x0) at softirq.c:387
+  4 Thread 4 (ksoftirqd_CPU0)  ksoftirqd (__bind_cpu=0x0) at softirq.c:387
+  3 Thread 3 (keventd)  context_thread (dummy=0x0) at context.c:99
+  2 Thread 2 (kmcheck)  __down_interruptible (sem=0x321020) at semaphore.c:128
+  1 Thread 1 (init)  schedule_timeout (timeout=228644) at sched.c:453
+(gdb) thread 17
+[Switching to thread 17 (Thread 427)]#0  0x0001f8d4 in do_syslog (type=0, buf=0x406b38 "", len=4095)
+    at printk.c:178
+178                     error = wait_event_interruptible(log_wait, (log_start - log_end));
+(gdb) bt 3
+#0  0x0001f8d4 in do_syslog (type=0, buf=0x406b38 "", len=4095) at printk.c:178
+#1  0x0007a6aa in kmsg_read (file=0x0, buf=0x0, count=0, ppos=0x0) at kmsg.c:35
+#2  0x0004d5c8 in sys_read (fd=0, buf=0x406b38 "", count=4095) at read_write.c:162
+(More stack frames follow...)
+(gdb) 
+
+
+Way 2:
+------
+The other way takes longer and is more painful than it needs to be, but
+it has the advantage of not requiring a helper module.
+You need to add two user-defined commands to your .gdbinit
+----8<-----------------8<---------------------------------
+define addcontext
+        maintenance packet Qa,$arg0,$arg1,,
+end
+define findthreads
+        set $init_thread = init_tasks[0]
+        set $athread = $init_thread->next_task
+        while $athread != $init_thread
+                set $frameptr = (unsigned long *)(((unsigned long *)$athread->thread.ksp)[0])
+                printf "%s %x\n", (char *)$athread->comm, $frameptr
+                set $athread = $athread->next_task
+        end
+end
+----8<-----------------8<---------------------------------
+
+(gdb) findthreads 
+init 7f5d80
+kmcheck 7f1eb8
+keventd df7f08
+ksoftirqd_CPU0 df5f38
+ksoftirqd_CPU1 df3f38
+kswapd de5e48
+kreclaimd de3ec0
+bdflush de1eb8
+kupdated ddfeb8
+mdrecoveryd ddbf18
+kjournald f00bea0
+kjournald f003ea0
+kjournald efffea0
+kjournald eff9ea0
+kjournald eff5ea0
+syslogd e975d80
+klogd eb11d80
+sshd e7ffd80
+xinetd e733d80
+crond 1003e28
+xfs e567d80
+mingetty e4dfd08
+(gdb) addcontext syslogd e975d80
+sending: "Qa,syslogd,e975d80,,"
+received: "OK"
+(gdb) info threads
+  1 Thread 65536 (syslogd)  schedule_timeout (timeout=2147483647) at sched.c:425
+(gdb) thread 1
+[Switching to thread 1 (Thread 65536)]#0  schedule_timeout (timeout=2147483647) at sched.c:425
+425                     goto out;
+(gdb) bt 3
+#0  schedule_timeout (timeout=2147483647) at sched.c:425
+#1  0x00063178 in do_select (n=1, fds=0xe975ed8, timeout=0xe975ef0) at select.c:223
+#2  0x00063548 in sys_select (n=1, inp=0x7ffff800, outp=0x0, exp=0x0, tvp=0x0) at select.c:318
+(More stack frames follow...)
+(gdb) addcontext klogd eb11d80
+sending: "Qa,klogd,eb11d80,,"
+received: "OK"
+(gdb) info threads
+  2 Thread 65537 (klogd)  0x0001f8d4 in do_syslog (type=129048040, buf=0x406b38 "", len=4095)
+    at printk.c:178
+* 1 Thread 65536 (syslogd)  schedule_timeout (timeout=2147483647) at sched.c:425
+(gdb) thread 2
+[Switching to thread 2 (Thread 65537)]#0  0x0001f8d4 in do_syslog (type=129048040, buf=0x406b38 "", 
+    len=4095) at printk.c:178
+178                     error = wait_event_interruptible(log_wait, (log_start - log_end));
+(gdb) bt 3
+#0  0x0001f8d4 in do_syslog (type=129048040, buf=0x406b38 "", len=4095) at printk.c:178
+#1  0x0007a6aa in kmsg_read (file=0x7b11de8, buf=0x7b11de8 "", count=0, ppos=0x0) at kmsg.c:35
+#2  0x0004d5c8 in sys_read (fd=129048040, buf=0x406b38 "", count=4095) at read_write.c:162
+(More stack frames follow...)
+(gdb) The program is running.  Exit anyway? (y or n) y
+
+
+This would be much easier if gdb's pseudo-language could actually evaluate
+arguments before passing them. Then we could simply call addcontext from
+the findthreads loop instead of having to do it manually.
+
+The addcontext command can also be used to backtrace arbitrary frame pointers,
+such as those printed on the console after a panic.
+
+
+Tips
+----
+
+o  Don't do unlimited backtraces, esp. if you're debugging a very remote
+   system. Do a bt 5 or something.
+
+o  Avoid using the "n" command and single stepping (maybe fixable in future).
+   Set breakpoints where necessary.
+
+o  Hit ^C on gdb to force the machine into debugger. Alternatively, PA1 or
+   #cp entered from the console will have the same effect.
+
+o  Sometimes it may happen that the machine has entered CP but no sign of
+   it is seen on the console - the status remains at VM Read/Running and
+   no breakpoint address or CP message is seen on the screen. If you suspect
+   that the machine is in CP, hit Enter on the console. This is usually
+   sufficient to get the ball rolling.
+
+o  When the machine is in CP, you can issue any CP commands from the console
+   without affecting the debugger. Just don't change state (registers, memory).
+
+o  Don't resume the VM manually from the console while the stub is active.
+
+o  You can kill the stub and gdb at any time, do a #cpu all cp tr end to get rid
+   of breakpoints and restart the stub and gdb. 
+
+o  Yes you can debug modules but it's complicated and I can't explain it all
+   here. Look at kgdb.sourceforge.net for instructions on debugging modules.
+   The procedure outlined for x86 will work here as well.
+
+gdb patch: (the stub uses "hardware" breakpoints, so decrementing PC is
+not necessary. I'm sure there's a better way to do this)
+
+--- ./gdb/s390-tdep.c.ORG	Wed Jun  5 01:59:18 2002
++++ ./gdb/s390-tdep.c	Wed Jun  5 01:59:39 2002
+@@ -1787,7 +1787,7 @@
+   /* Amount PC must be decremented by after a breakpoint.
+      This is often the number of bytes in BREAKPOINT
+      but not always.  */
+-  set_gdbarch_decr_pc_after_break (gdbarch, 2);
++  set_gdbarch_decr_pc_after_break (gdbarch, 0);
+   set_gdbarch_pop_frame (gdbarch, s390_pop_frame);
+   /* Stack grows downward.  */
+   set_gdbarch_inner_than (gdbarch, core_addr_lessthan);
